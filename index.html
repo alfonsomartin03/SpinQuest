@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpinQuest</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<!-- ============ MENU ============ -->
+<main id="menu" class="screen">
+  <div class="card menu-card">
+    <header>
+      <h1>Spin<span>Quest</span></h1>
+      <p>Turn your indoor ride into a game. Connect your trainer and heart-rate strap, pick a workout, and set your own power. SpinQuest reacts to every watt and beat.</p>
+    </header>
+
+    <div id="bt-warning" class="warning" hidden>
+      Web Bluetooth isn't available in this browser. Open this page in <b>Chrome</b> or <b>Edge</b> (desktop or Android), or use the simulator below.
+    </div>
+
+    <div class="grid2">
+      <section class="device" id="dev-trainer">
+        <div class="dev-head"><span class="dot"></span><h3>Trainer / power meter</h3></div>
+        <p class="status" data-status>Not connected</p>
+        <button class="btn" data-connect>Connect</button>
+      </section>
+      <section class="device" id="dev-hr">
+        <div class="dev-head"><span class="dot"></span><h3>Heart-rate strap</h3></div>
+        <p class="status" data-status>Not connected</p>
+        <button class="btn" data-connect>Connect</button>
+      </section>
+    </div>
+    <label class="small check"><input type="checkbox" id="show-all" checked> Show all Bluetooth devices (recommended: many trainers and straps don't advertise what they are)</label>
+
+    <section class="profile">
+      <h3>Rider</h3>
+      <div class="fields">
+        <label>Name <input id="p-name" type="text" maxlength="14" placeholder="You"></label>
+        <label>Weight (kg) <input id="p-weight" type="number" min="30" max="200" value="75"></label>
+        <label>FTP (W) <input id="p-ftp" type="number" min="50" max="600" value="200"></label>
+        <label>Max HR (bpm) <input id="p-maxhr" type="number" min="120" max="230" value="190"></label>
+      </div>
+    </section>
+
+    <section class="workout-pick">
+      <h3>Ride</h3>
+      <select id="workout"></select>
+      <p class="small" id="workout-desc"></p>
+      <canvas id="workout-preview" width="600" height="70"></canvas>
+    </section>
+
+    <div class="actions">
+      <button class="btn primary big" id="start">Start ride</button>
+      <p class="small" id="start-hint"></p>
+    </div>
+
+    <footer class="level-row">
+      <div><b id="m-level">Level 1</b> <span id="m-title"></span></div>
+      <div class="bar"><i id="m-xpbar"></i></div>
+      <small id="m-xp"></small>
+    </footer>
+  </div>
+</main>
+
+<!-- ============ HUD ============ -->
+<div id="hud" hidden>
+  <section class="panel stats">
+    <div class="power-row">
+      <div class="big"><span id="h-power">0</span><small>W</small></div>
+      <div class="zone-chip" id="h-pzone">Recovery</div>
+    </div>
+    <div class="zonebar" id="h-zonebar"></div>
+    <div class="metrics">
+      <div><b id="h-cad">--</b><small>rpm</small></div>
+      <div class="hr"><b id="h-hr">--</b><small>bpm</small><em id="h-hrz"></em></div>
+      <div><b id="h-speed">0.0</b><small>km/h</small></div>
+      <div><b id="h-wkg">0.0</b><small>W/kg</small></div>
+    </div>
+    <div class="minor">
+      <span id="h-time">0:00</span><span id="h-dist">0.00 km</span><span id="h-grade">0.0%</span><span id="h-kj">0 kJ</span>
+    </div>
+    <div class="tags"><span id="h-draft" class="tag" hidden>Drafting</span><span id="h-pause" class="tag warn" hidden>Paused</span></div>
+  </section>
+
+  <section class="panel board" id="h-board"></section>
+
+  <div class="top-center">
+    <canvas id="h-mini" width="640" height="56"></canvas>
+    <div class="seg-banner" id="h-seg" hidden><b id="h-seg-name"></b><div class="bar"><i id="h-seg-bar"></i></div><span id="h-seg-time"></span></div>
+  </div>
+
+  <div class="controls">
+    <button class="icon" id="btn-mute" title="Mute (M)">🔊</button>
+    <button class="icon" id="btn-finish" title="Finish ride">Finish</button>
+  </div>
+
+  <div class="bottom">
+    <section class="panel combo">
+      <div class="score"><span id="h-score">0</span><small>pts</small></div>
+      <div class="mult"><b id="h-mult">x1</b><div class="bar"><i id="h-multbar"></i></div></div>
+      <div class="lvl"><b id="h-level">Lv 1</b><div class="bar thin"><i id="h-xpbar"></i></div></div>
+    </section>
+    <section class="panel workout">
+      <div class="wo-head">
+        <div><b id="h-step">Free ride</b><small id="h-next"></small></div>
+        <div class="target" id="h-target" hidden><span id="h-twatts">--</span><small>W target</small></div>
+        <div class="remain" id="h-remain"></div>
+      </div>
+      <canvas id="h-graph" width="760" height="110"></canvas>
+    </section>
+  </div>
+
+  <div id="h-wait" class="wait">Start pedalling to begin</div>
+  <div id="h-sim" class="simhelp" hidden>Simulator: <kbd>↑</kbd><kbd>↓</kbd> ±10 W · <kbd>PgUp</kbd><kbd>PgDn</kbd> ±50 W · hold <kbd>Space</kbd> sprint</div>
+</div>
+
+<!-- ============ SUMMARY ============ -->
+<main id="summary" class="screen" hidden>
+  <div class="card summary-card">
+    <h2 id="s-title">Ride complete</h2>
+    <div class="stat-grid" id="s-stats"></div>
+    <canvas id="s-chart" width="900" height="200"></canvas>
+    <div class="zones2">
+      <div><h4>Time in power zones</h4><div id="s-zp"></div></div>
+      <div><h4>Time in heart-rate zones</h4><div id="s-zh"></div></div>
+    </div>
+    <div id="s-ach"></div>
+    <div class="level-row">
+      <div><b id="s-level"></b> <span id="s-lvltitle"></span></div>
+      <div class="bar"><i id="s-xpbar"></i></div>
+      <small id="s-xp"></small>
+    </div>
+    <div class="actions"><button class="btn primary big" id="s-again">Back to menu</button></div>
+  </div>
+</main>
+
+<div id="toasts"></div>
+
+<div id="load-error" class="warning" hidden style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:20;max-width:560px">
+  The app didn't load. Start it with <b>python3 serve.py</b> and open <b>http://localhost:8000</b> in Chrome. Opening index.html directly won't work.
+</div>
+<script>setTimeout(() => { if (!window.__sqLoaded) document.getElementById('load-error').hidden = false; }, 2000);</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
