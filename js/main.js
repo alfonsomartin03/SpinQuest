@@ -8,7 +8,7 @@ import { Sim } from './sim.js';
 import {
   DataHub, connectTrainer, connectHeartRate, bluetoothSupported, bluetoothProblem, explainError, getKnownDevices,
 } from './ble.js';
-import { VirtualGears, slew } from './gearing.js';
+import { VirtualGears, ResistanceControl, ergGuard, slew } from './gearing.js';
 import { LoopbackSession, DemoPeers } from './net.js';
 import { initAudio, sfx, setMuted, isMuted } from './audio.js';
 import { ACHIEVEMENTS } from './achievements.js';
@@ -64,8 +64,10 @@ function stopNet() { net?.off(); net = null; }
 
 // trainer control during a ride
 let gears = null;
+let resist = null;
 let ctlActive = false;
 let cadSmooth = 0;
+let cadFast = 0;
 let cmdWatts = null;
 let sendTimer = 0;
 
@@ -124,7 +126,7 @@ function refreshMenu() {
   $('m-xp').textContent = `${progress.xp.toLocaleString()} XP · ${Object.keys(progress.ach).length}/${ACHIEVEMENTS.length} achievements · ${Object.keys(progress.discovered).length}/${LANDMARKS.length} landmarks`;
   let hint = 'No trainer connected: you will ride with the keyboard simulator.';
   if (links.trainer) {
-    if (canControl() && p.control === 'gears') hint = 'Virtual gears on: shift with ← → or the + − buttons. Stop pedalling and the ride pauses.';
+    if (canControl() && p.control === 'gears') hint = 'Cadence control on: resistance keeps you in your cadence range. Shift with ← → or the + − buttons.';
     else if (canControl() && p.control === 'erg') hint = 'ERG on: the trainer holds each workout interval for you.';
     else hint = 'Set your trainer power yourself. SpinQuest only listens.';
   }
@@ -263,27 +265,36 @@ function shiftGear(dir) {
 $('g-up').addEventListener('click', () => shiftGear(+1));
 $('g-down').addEventListener('click', () => shiftGear(-1));
 
-/** Each frame: work out the resistance the road and gear imply, and ask the trainer for it. */
+/**
+ * Each frame: decide what resistance to ask the trainer for.
+ *  - Virtual gears: a cadence-band controller. Resistance holds while your cadence is inside your range, firms up
+ *    only when you reach the top of it (you are pushing harder) and eases off when cadence drops (you are easing
+ *    off or grinding). It never tries to hold a power at the cost of your cadence.
+ *  - ERG: holds the workout's watts, but eases the target if cadence falls below your range.
+ */
 function driveTrainer(dt) {
   const c = links.trainer?.control;
   if (!ctlActive || !c) return;
   if (c.state === 'idle') c.acquire();
   const cad = hub.get('cadence') ?? 0;
   cadSmooth += (cad - cadSmooth) * (1 - Math.exp(-dt / 1.0));
+  cadFast += (cad - cadFast) * (1 - Math.exp(-dt / 0.3));
   if (c.state !== 'ready') { showGear(); return; }
 
   let want;
   const erg = profile.control === 'erg' && game.target;
+  const ctx = { grade: game.grade, mass: game.mass, drag: game.user.drag };
   if (game.finished || game.paused) want = 0;
-  else if (erg) want = game.wo ? game.wo.watts : game.target.watts;
+  else if (erg) want = ergGuard(game.wo ? game.wo.watts : game.target.watts, cadFast, gears.low);
   else {
+    const before = resist.physics(ctx);
     const dir = gears.update(dt, cadSmooth);
-    if (dir) { sfx('step'); showGear(true); }
-    want = gears.targetPower({ cadence: cadSmooth, grade: game.grade, mass: game.mass, drag: game.user.drag });
+    if (dir) { resist.compensate(before, resist.physics(ctx)); sfx('step'); showGear(true); } // auto-shifts don't jolt the feel
+    want = resist.update(dt, cad, ctx);
   }
-  cmdWatts = slew(cmdWatts, Math.min(want, 2000), dt);
+  cmdWatts = slew(cmdWatts, Math.min(want, 2000), dt, 600);
   sendTimer += dt;
-  if (sendTimer >= 0.5) { sendTimer = 0; c.setTargetPower(cmdWatts); }
+  if (sendTimer >= 0.25) { sendTimer = 0; c.setTargetPower(cmdWatts); }
   showGear();
 }
 
@@ -301,7 +312,9 @@ function startRide() {
 
   ctlActive = !useSim && canControl() && p.control !== 'off';
   gears = new VirtualGears({ auto: p.autoShift, low: p.cadLow, high: p.cadHigh });
+  resist = new ResistanceControl(gears, p.ftp);
   cadSmooth = 0;
+  cadFast = 0;
   cmdWatts = null;
   sendTimer = 0;
   if (ctlActive) links.trainer.control.acquire();

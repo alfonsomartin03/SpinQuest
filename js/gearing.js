@@ -77,6 +77,93 @@ export class VirtualGears {
   }
 }
 
+/**
+ * Cadence-hold resistance. The aim is to sit in the middle of your cadence range and stay there, whatever
+ * power you make, using many small, smooth corrections rather than big ones:
+ *   - the request is a base level plus a small *proportional* term on cadence (a bit more resistance when you
+ *     spin faster than the middle, a bit less when slower). This acts at once and damps the loop.
+ *   - a slow *integral* term moves the base level so your cadence settles back on the middle. It is rate-limited
+ *     and has a small dead zone so ordinary pedal-stroke wobble does nothing.
+ *   - outside your range both terms are a little firmer, but never abrupt.
+ * Pushing harder shows up as cadence drifting above the middle (so resistance rises smoothly to meet you);
+ * easing off shows up as cadence drifting down (so it eases off with you). The road and gear set the starting
+ * level, so climbs and harder gears still feel different.
+ */
+export class ResistanceControl {
+  constructor(gears, ftp = 200, tune = {}) {
+    this.gears = gears;
+    this.ftp = ftp;
+    this.tune = {
+      // watts per rpm (as a fraction of FTP) for the instant term; watts per second per rpm for the slow term
+      // found by simulating a rider, a flywheel and an ERG-style trainer (lag 0.8 to 2 s, late noisy cadence) and
+      // minimising swings; see test/control.test.mjs
+      kp: 0.0084, ki: 0.00133, kd: 0.0187, dTau: 0.31, dead: 1.1, firm: 1.34, maxRate: 15.3, outTau: 0.18, slewUp: 96, slewDown: 75, windup: 30, windupRate: 18, firmDown: 3, maxDown: 40, ...tune,
+    };
+    this.bias = 0; // watts added to what the road/gear demand, at the middle cadence
+    this.cadF = 0;
+    this.accel = 0; // filtered rate of change of cadence (rpm per second)
+    this.started = false;
+    this.out = null;
+  }
+
+  /** The cadence to hold: the middle of the range. */
+  get ref() { return (this.gears.low + this.gears.high) / 2; }
+
+  /** Watts the road and current gear demand at the middle cadence. */
+  physics({ grade, mass, drag = 1 }) {
+    return this.gears.targetPower({ cadence: this.ref, grade, mass, drag });
+  }
+
+  /** Keep resistance continuous across an automatic gear change (the baseline moves, the feel doesn't). */
+  compensate(physBefore, physAfter) {
+    this.bias += physBefore - physAfter;
+  }
+
+  /** @returns {number} the target power (W) to ask the trainer for */
+  update(dt, cadence, ctx) {
+    const { low, high } = this.gears;
+    const T = this.tune;
+    if (!this.started) { this.cadF = cadence; this.started = true; }
+    const prev = this.cadF;
+    this.cadF += (cadence - this.cadF) * (1 - Math.exp(-dt / 0.35));
+    if (dt > 0) this.accel += (clamp((this.cadF - prev) / dt, -60, 60) - this.accel) * (1 - Math.exp(-dt / T.dTau));
+    const c = this.cadF;
+    const mid = this.ref;
+    const e = c - mid;
+    const phys = this.physics(ctx);
+    const outside = c > high || c < low;
+    // The slow term only integrates when cadence is not running away (anti-windup): while the proportional and
+    // inertia terms are still catching a surge or a dip, winding the base level up would only cause a rebound.
+    const runaway = Math.abs(e) > T.windup || (Math.sign(this.accel) === Math.sign(e) && Math.abs(this.accel) > T.windupRate);
+    if (c > 25 && !runaway) { // only adapt while really pedalling
+      const eDead = Math.sign(e) * Math.max(0, Math.abs(e) - T.dead);
+      const rate = e < 0 && c < low // sagging below the range: ease off quickly so the rider is never left grinding
+        ? clamp(this.ftp * T.ki * T.firmDown * eDead, -T.maxDown, 0)
+        : clamp(this.ftp * T.ki * (outside ? T.firm : 1) * eDead, -T.maxRate, T.maxRate * 1.4);
+      this.bias += rate * dt;
+    }
+    const level = clamp(phys + this.bias, 0.08 * this.ftp, 4 * this.ftp);
+    this.bias = level - phys; // no wind-up beyond the limits
+    // instant proportional term, and a fade-out below ~40 rpm so a stalling rider is never pinned
+    const kp = this.ftp * T.kp * (outside ? T.firm : 1);
+    const fade = clamp((c - 38) / (low - 38), 0, 1);
+    // virtual inertia: resist *changes* in cadence, as a heavy flywheel would, so a surge or a dip can't run away
+    const inertia = this.ftp * T.kd * this.accel;
+    const want = Math.max(0, level + kp * clamp(e, -40, 40) + inertia) * (fade * fade * (3 - 2 * fade));
+    // smooth and rate-limit the request so the trainer is never jerked
+    if (this.out == null) this.out = want;
+    const target = this.out + (want - this.out) * (1 - Math.exp(-dt / T.outTau));
+    this.out = clamp(target, this.out - T.slewDown * dt, this.out + T.slewUp * dt);
+    return this.out;
+  }
+}
+
+/** ERG with a guard: if the rider is grinding below their range, ease the target so the trainer can't pin them. */
+export function ergGuard(watts, cadence, low) {
+  if (cadence > 20 && cadence < low) return watts * clamp(cadence / low, 0.3, 1) ** 2;
+  return watts;
+}
+
 /** Limit how fast the requested power may rise so a sudden cadence spike can't jerk the trainer. */
 export function slew(prev, target, dt, maxRisePerSec = 300) {
   if (prev == null) return target;
