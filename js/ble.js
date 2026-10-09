@@ -8,6 +8,8 @@ export const UUID = {
   CP_MEASUREMENT: 0x2a63,
   HRS: 0x180d,
   HR_MEASUREMENT: 0x2a37,
+  FTMS_CONTROL: 0x2ad9,
+  FTMS_FEATURE: 0x2acc,
 };
 
 // ---- Parsers (pure functions, unit tested) ---------------------------------
@@ -63,6 +65,114 @@ export function parseHeartRate(dv) {
   return { hr: dv.getUint8(0) & 0x01 ? dv.getUint16(1, true) : dv.getUint8(1) };
 }
 
+// ---- FTMS control point (resistance control) ------------------------------------------------
+
+export const FTMS_OP = { REQUEST_CONTROL: 0x00, RESET: 0x01, SET_TARGET_POWER: 0x05, START: 0x07, STOP: 0x08, RESPONSE: 0x80 };
+
+export const encodeTargetPower = (watts) => {
+  const w = Math.max(0, Math.min(4000, Math.round(watts)));
+  return Uint8Array.of(FTMS_OP.SET_TARGET_POWER, w & 0xff, (w >> 8) & 0xff);
+};
+
+/** Parse a control point indication: {op, ok, result} (result 0x01 = success, 0x05 = control not permitted). */
+export function parseControlResponse(dv) {
+  if (dv.byteLength < 3 || dv.getUint8(0) !== FTMS_OP.RESPONSE) return null;
+  return { op: dv.getUint8(1), result: dv.getUint8(2), ok: dv.getUint8(2) === 0x01 };
+}
+
+/**
+ * Sets the trainer's target power over the standard FTMS control point.
+ * States: none (not controllable) -> idle (available) -> requesting -> ready | denied.
+ */
+export class TrainerControl {
+  constructor() {
+    this.state = 'none';
+    this.reason = '';
+    this.cp = null;
+    this.lastW = null;
+    this.onState = () => {};
+    this.queue = Promise.resolve();
+    this.timer = null;
+  }
+
+  #set(state, reason = '') {
+    this.state = state;
+    this.reason = reason;
+    this.onState(state, reason);
+  }
+
+  /** Discover the control point on an FTMS service (called on every (re)connect). */
+  async attach(service) {
+    this.cp = null;
+    this.lastW = null;
+    try {
+      const cp = await service.getCharacteristic(UUID.FTMS_CONTROL);
+      let canTarget = true;
+      try {
+        const dv = await (await service.getCharacteristic(UUID.FTMS_FEATURE)).readValue();
+        canTarget = dv.byteLength >= 8 ? !!(dv.getUint32(4, true) & (1 << 3)) : true; // target-setting bit 3 = power target
+      } catch { /* feature read is optional */ }
+      if (!canTarget) { this.#set('none', 'This trainer cannot hold a target power.'); return; }
+      cp.addEventListener('characteristicvaluechanged', (e) => this.#onIndication(e.target.value));
+      await cp.startNotifications();
+      this.cp = cp;
+      this.#set('idle');
+    } catch {
+      this.#set('none', 'This device has no trainer control.');
+    }
+  }
+
+  /** Ask the trainer for control (call when a ride starts). */
+  acquire() {
+    if (this.state !== 'idle' || !this.cp) return;
+    this.#set('requesting');
+    this.#write(Uint8Array.of(FTMS_OP.REQUEST_CONTROL));
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => { // some trainers never indicate; assume we have control
+      if (this.state === 'requesting') { this.#write(Uint8Array.of(FTMS_OP.START)); this.#set('ready'); }
+    }, 3000);
+  }
+
+  setTargetPower(watts) {
+    if (this.state !== 'ready') return;
+    const w = Math.round(watts);
+    if (w === this.lastW) return;
+    this.lastW = w;
+    this.#write(encodeTargetPower(w));
+  }
+
+  /** Give resistance back to the rider (call when a ride ends). */
+  release() {
+    clearTimeout(this.timer);
+    if (this.cp && (this.state === 'ready' || this.state === 'requesting')) {
+      this.#write(encodeTargetPower(0));
+      this.#write(Uint8Array.of(FTMS_OP.STOP, 0x01));
+      this.#write(Uint8Array.of(FTMS_OP.RESET));
+      this.lastW = null;
+      this.#set('idle');
+    }
+  }
+
+  #onIndication(dv) {
+    const r = parseControlResponse(dv);
+    if (!r) return;
+    if (r.op === FTMS_OP.REQUEST_CONTROL) {
+      clearTimeout(this.timer);
+      if (r.ok) { this.#write(Uint8Array.of(FTMS_OP.START)); this.#set('ready'); }
+      else this.#set('denied', r.result === 0x05 ? 'Another app has control of this trainer.' : 'The trainer refused control.');
+    } else if (r.op === FTMS_OP.SET_TARGET_POWER && !r.ok && r.result === 0x05) {
+      this.#set('idle'); // lost control: re-acquire next tick
+    }
+  }
+
+  #write(bytes) {
+    // GATT allows one operation at a time, so writes are chained
+    this.queue = this.queue
+      .then(() => (this.cp.writeValueWithResponse ? this.cp.writeValueWithResponse(bytes) : this.cp.writeValue(bytes)))
+      .catch(() => {});
+  }
+}
+
 // ---- Connections -------------------------------------------------------------
 
 export const bluetoothSupported = () => typeof navigator !== 'undefined' && !!navigator.bluetooth;
@@ -78,27 +188,60 @@ export function bluetoothProblem() {
 /** Turn a Web Bluetooth error into advice the rider can act on. */
 export function explainError(err) {
   const msg = err?.message || String(err);
-  if (err?.name === 'NotFoundError') {
-    return /cancel/i.test(msg) || /chooser/i.test(msg)
-      ? 'No device chosen. Wake the device (spin the cranks), then try again.'
-      : 'No device found. Wake it by pedalling, tick "Show all Bluetooth devices", and close other apps (Zwift, phone apps) that may hold its connection.';
-  }
+  if (err?.name === 'NotFoundError') return 'No device chosen. Wake the device (spin the cranks), then try again. Not in the list? Use "Search all devices".';
   if (err?.name === 'SecurityError') return 'Bluetooth blocked. Allow Bluetooth for your browser in system settings and try again.';
   if (err?.name === 'NetworkError') return 'Found it but could not connect. Pedal to wake it, make sure no other app has taken its connection, then retry.';
   if (/No supported power service/.test(msg)) return 'That device has no power or trainer service. Pick your trainer/power meter, not another device.';
   return `Couldn't connect: ${msg}`;
 }
 
-async function request(serviceIds, all) {
+// Chrome's picker lists every device matching ANY filter. Matching on the standard service keeps
+// out phones, TVs and earbuds, and the brand prefixes catch devices that don't advertise services.
+const TRAINER_NAMES = [
+  'KICKR', 'Wahoo', 'Tacx', 'NEO', 'FLUX', 'Zwift', 'Elite', 'Direto', 'Suito', 'Justo', 'Saris', 'CycleOps', 'Hammer',
+  'JetBlack', 'Kinetic', 'Wattbike', 'Atom', 'Stages', 'Assioma', 'Favero', '4iiii', 'Rotor', 'Quarq', 'SRM', 'Power2Max',
+  'Magene', 'Bkool', 'BKOOL', 'Thinkrider', 'Xplova', 'Onelap', 'Zycle', 'Peloton', 'Echelon', 'Schwinn', 'Domyos', 'Vector',
+];
+const HR_NAMES = [
+  'Polar', 'H10', 'H9', 'OH1', 'Verity', 'HRM', 'TICKR', 'COOSPO', 'Coospo', 'Magene', 'Scosche', 'Rhythm', 'Suunto',
+  'WHOOP', 'Whoop', 'Myzone', 'Zephyr', 'Garmin', 'Moofit', 'Geonaute', 'Decathlon', 'Viiiiva', 'HW', 'CL',
+];
+
+async function request(kind, all) {
   const optionalServices = [UUID.FTMS, UUID.CPS, UUID.HRS];
-  return navigator.bluetooth.requestDevice(
-    all ? { acceptAllDevices: true, optionalServices } : { filters: serviceIds.map((s) => ({ services: [s] })), optionalServices },
-  );
+  if (all) return navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices });
+  const services = kind === 'hr' ? [UUID.HRS] : [UUID.FTMS, UUID.CPS];
+  const names = kind === 'hr' ? HR_NAMES : TRAINER_NAMES;
+  const opts = {
+    filters: [...services.map((s) => ({ services: [s] })), ...names.map((n) => ({ namePrefix: n }))],
+    optionalServices,
+  };
+  // the heart-rate list shouldn't show trainers or power meters (older Chromes ignore this)
+  if (kind === 'hr') opts.exclusionFilters = [{ services: [UUID.FTMS] }, { services: [UUID.CPS] }];
+  return navigator.bluetooth.requestDevice(opts);
+}
+
+/** Devices this browser was already allowed to use (Chrome with persistent permissions). */
+export async function getKnownDevices() {
+  try { return (await navigator.bluetooth.getDevices?.()) || []; } catch { return []; }
+}
+
+/** A remembered device only connects once it is advertising again; wait for that briefly. */
+async function awaken(device) {
+  if (!device.watchAdvertisements) return;
+  const ac = new AbortController();
+  try {
+    await device.watchAdvertisements({ signal: ac.signal });
+    await new Promise((resolve) => {
+      const t = setTimeout(resolve, 7000);
+      device.addEventListener('advertisementreceived', () => { clearTimeout(t); resolve(); }, { once: true });
+    });
+  } catch { /* connect anyway */ } finally { ac.abort(); }
 }
 
 /**
  * A device link that survives drops: it re-subscribes after reconnecting.
- * `subscribe(server, emit)` must start the notifications.
+ * `subscribe(server)` must start the notifications.
  */
 class Link {
   constructor(device, subscribe, onStatus) {
@@ -135,6 +278,7 @@ class Link {
 
   close() {
     this.closed = true;
+    this.control?.release();
     if (this.device.gatt.connected) this.device.gatt.disconnect();
     this.onStatus('idle', '');
   }
@@ -146,10 +290,15 @@ async function notify(service, charId, handler) {
   await ch.startNotifications();
 }
 
-/** Connect a smart trainer or power meter. `emit` receives partial {power, cadence, speed, hr}. */
-export async function connectTrainer(emit, onStatus, { all = false } = {}) {
-  const device = await request([UUID.FTMS, UUID.CPS], all);
+/**
+ * Connect a smart trainer or power meter. `emit` receives partial {power, cadence, speed, hr}.
+ * The returned link has `.control` (a TrainerControl) for resistance control.
+ */
+export async function connectTrainer(emit, onStatus, { all = false, device = null } = {}) {
+  if (device) await awaken(device);
+  device ||= await request('trainer', all);
   const cpState = {};
+  const control = new TrainerControl();
   const link = new Link(device, async (server) => {
     let ftmsPower = false;
     let ftmsPackets = 0;
@@ -171,18 +320,21 @@ export async function connectTrainer(emit, onStatus, { all = false } = {}) {
         if (ftmsPackets === 4 && !ftmsPower) startCps(); // FTMS without power: fall back to CPS
         emit(d);
       });
+      await control.attach(ftms);
       return;
     } catch { /* no FTMS */ }
     await startCps();
     if (!cpsStarted) throw new Error('No supported power service on this device');
   }, onStatus);
+  link.control = control;
   await link.open();
   return link;
 }
 
 /** Connect a heart rate strap/watch broadcasting the standard Heart Rate service. */
-export async function connectHeartRate(emit, onStatus, { all = false } = {}) {
-  const device = await request([UUID.HRS], all);
+export async function connectHeartRate(emit, onStatus, { all = false, device = null } = {}) {
+  if (device) await awaken(device);
+  device ||= await request('hr', all);
   const link = new Link(device, async (server) => {
     const svc = await server.getPrimaryService(UUID.HRS);
     await notify(svc, UUID.HR_MEASUREMENT, (dv) => emit(parseHeartRate(dv)));

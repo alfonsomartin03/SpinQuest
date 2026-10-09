@@ -9,6 +9,15 @@
 <body>
 <canvas id="scene"></canvas>
 
+<div id="loader">
+  <div class="loader-card">
+    <h1>Spin<span>Quest</span></h1>
+    <div class="loader-bar"><i id="loader-bar"></i></div>
+    <p id="loader-text">Starting…</p>
+    <p class="small" id="loader-error" hidden></p>
+  </div>
+</div>
+
 <!-- ============ MENU ============ -->
 <main id="menu" class="screen">
   <div class="card menu-card">
@@ -26,14 +35,33 @@
         <div class="dev-head"><span class="dot"></span><h3>Trainer / power meter</h3></div>
         <p class="status" data-status>Not connected</p>
         <button class="btn" data-connect>Connect</button>
+        <button class="btn ghost" data-reconnect hidden></button>
+        <button class="btn ghost" data-all hidden>Search all devices</button>
       </section>
       <section class="device" id="dev-hr">
         <div class="dev-head"><span class="dot"></span><h3>Heart-rate strap</h3></div>
         <p class="status" data-status>Not connected</p>
         <button class="btn" data-connect>Connect</button>
+        <button class="btn ghost" data-reconnect hidden></button>
+        <button class="btn ghost" data-all hidden>Search all devices</button>
       </section>
     </div>
-    <label class="small check"><input type="checkbox" id="show-all" checked> Show all Bluetooth devices (recommended: many trainers and straps don't advertise what they are)</label>
+    <p class="small tip">The pairing list only shows trainers, power meters and heart-rate straps. Pick the one named like your device (for example "KICKR CORE 1234"). Pedal or wet the strap first so it wakes up.</p>
+    <label class="small check"><input type="checkbox" id="show-all"> Show every Bluetooth device (only if yours isn't listed)</label>
+
+    <section class="device ctl" id="ctl" hidden>
+      <div class="dev-head"><h3>Trainer resistance</h3></div>
+      <p class="small" id="ctl-note"></p>
+      <label class="radio"><input type="radio" name="ctlmode" value="gears" checked><span><b>Virtual gears</b> Natural cadence with a Zwift Cog or any fixed gear. Resistance follows the road and your gear.</span></label>
+      <label class="radio"><input type="radio" name="ctlmode" value="erg"><span><b>ERG</b> The trainer holds each workout interval's power for you (free rides use virtual gears).</span></label>
+      <label class="radio"><input type="radio" name="ctlmode" value="off"><span><b>Listen only</b> You control resistance yourself, for example with a real cassette.</span></label>
+      <label class="small check"><input type="checkbox" id="autoshift" checked> Auto-shift to keep my cadence in my comfortable range</label>
+      <div class="cadrange small" id="cadrange">Comfortable cadence
+        <input id="cad-low" type="number" min="50" max="110" value="80" aria-label="Lowest comfortable cadence"> to
+        <input id="cad-high" type="number" min="60" max="130" value="100" aria-label="Highest comfortable cadence"> rpm
+        <span>Shifts easier when you drop below the first number and harder when you go above the second.</span>
+      </div>
+    </section>
 
     <section class="profile">
       <h3>Rider</h3>
@@ -50,6 +78,18 @@
       <select id="workout"></select>
       <p class="small" id="workout-desc"></p>
       <canvas id="workout-preview" width="600" height="70"></canvas>
+    </section>
+
+    <section class="gfx">
+      <label class="small">Graphics
+        <select id="quality">
+          <option value="low">Low (fastest)</option>
+          <option value="medium">Medium</option>
+          <option value="high" selected>High</option>
+          <option value="ultra">Ultra (best looking)</option>
+        </select>
+      </label>
+      <span class="small">The picture adapts its sharpness automatically to keep the frame rate smooth.</span>
     </section>
 
     <div class="actions">
@@ -81,6 +121,11 @@
     </div>
     <div class="minor">
       <span id="h-time">0:00</span><span id="h-dist">0.00 km</span><span id="h-grade">0.0%</span><span id="h-kj">0 kJ</span>
+    </div>
+    <div class="gearbox" id="h-gear" hidden>
+      <button class="gbtn" id="g-down" title="Easier gear (←)">−</button>
+      <div class="gtxt"><b id="g-num">17</b><small>gear</small><span id="g-info"></span></div>
+      <button class="gbtn" id="g-up" title="Harder gear (→)">+</button>
     </div>
     <div class="tags"><span id="h-draft" class="tag" hidden>Drafting</span><span id="h-pause" class="tag warn" hidden>Paused</span></div>
   </section>
@@ -121,7 +166,7 @@
   </div>
 
   <div id="h-wait" class="wait">Start pedalling to begin</div>
-  <div id="h-sim" class="simhelp" hidden>Simulator: <kbd>↑</kbd><kbd>↓</kbd> ±10 W · <kbd>PgUp</kbd><kbd>PgDn</kbd> ±50 W · hold <kbd>Space</kbd> sprint</div>
+  <div id="h-sim" class="simhelp" hidden>Simulator: <kbd>↑</kbd><kbd>↓</kbd> ±10 W · <kbd>PgUp</kbd><kbd>PgDn</kbd> ±50 W · hold <kbd>Space</kbd> sprint · <kbd>P</kbd> stop pedalling</div>
 </div>
 
 <!-- ============ SUMMARY ============ -->
@@ -150,6 +195,7 @@
   The app didn't load. Start it with <b>python3 serve.py</b> and open <b>http://localhost:8000</b> in Chrome. Opening index.html directly won't work.
 </div>
 <script>setTimeout(() => { if (!window.__sqLoaded) document.getElementById('load-error').hidden = false; }, 2000);</script>
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.min.js","three/addons/":"./vendor/three/addons/"}}</script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

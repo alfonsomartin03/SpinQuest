@@ -17,6 +17,11 @@ const BOTS = [
   { lat: -2.5, name: 'Diego', color: '#f15bb5', f: 1.02, off: 55 },
 ];
 
+/** Stop pedalling and the rider brakes to a halt (even downhill); after this long the ride pauses. */
+export const IDLE_COAST = 1; // seconds of free-wheeling allowed
+export const IDLE_PAUSE = 3; // seconds without pedalling before the ride pauses
+const BRAKE = 2.4; // m/s^2
+
 export const ORB_SPACING = 9;
 const ORB_GROUP = 6;
 export const hash = (n) => {
@@ -52,6 +57,7 @@ export class Game {
     this.started = false;
     this.paused = true;
     this.lastMove = 0;
+    this.idle = 0;
     this.finished = false;
 
     this.user = mkRider(profile.name || 'You', '#ff3b6b', START, { isUser: true });
@@ -116,11 +122,13 @@ export class Game {
     this.p3 += (pw - this.p3) * (1 - Math.exp(-dt / 3));
     this.pSmooth += (pw - this.pSmooth) * (1 - Math.exp(-dt / 0.8));
 
-    if (pw > 0 || this.cad > 0) {
+    // Pedalling means real power or cadence (a spinning flywheel's last few rpm don't count).
+    if (pw > 3 || this.cad > 8) {
       this.lastMove = this.clock;
       if (!this.started) { this.started = true; this.#toast('Go!', 'Ride started', 'go'); this.#sfx('step'); }
     }
-    this.paused = !this.started || this.clock - this.lastMove > 5;
+    this.idle = this.clock - this.lastMove; // seconds since the rider last pedalled
+    this.paused = !this.started || this.idle > IDLE_PAUSE;
     const active = !this.paused && !this.finished;
 
     this.#physics(dt);
@@ -158,7 +166,8 @@ export class Game {
     });
 
     const u = this.user;
-    this.#advance(u, this.pSmooth, this.mass, dt);
+    if (!this.started || this.idle > IDLE_COAST) this.#brake(u, dt);
+    else this.#advance(u, this.pSmooth, this.mass, dt);
     u.cad = this.cad;
     u.crank += (this.cad / 60) * Math.PI * 2 * dt;
     this.grade = gradeAt(u.x);
@@ -169,11 +178,19 @@ export class Game {
       const c = this.coach;
       c.drag = 1;
       const target = this.target ? this.target.watts : 0;
-      this.#advance(c, this.paused ? 0 : target, c.mass, dt);
+      if (this.paused) this.#brake(c, dt);
+      else this.#advance(c, target, c.mass, dt);
       c.x = clamp(c.x, u.x - 60, u.x + 60);
       c.cad = 88;
       c.crank += (88 / 60) * Math.PI * 2 * dt;
     }
+  }
+
+  #brake(r, dt) {
+    r.v = Math.max(0, r.v - BRAKE * dt);
+    r.x += r.v * dt;
+    r.wheel += (r.v / 0.36) * dt;
+    r.power = 0;
   }
 
   #advance(r, power, mass, dt) {

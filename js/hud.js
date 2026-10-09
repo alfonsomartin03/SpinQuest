@@ -118,8 +118,10 @@ export class Hud {
     setText(e['h-grade'], `${(game.grade * 100).toFixed(1)}%`);
     setText(e['h-kj'], `${Math.round(game.energy / 1000)} kJ`);
     e['h-draft'].hidden = !game.user.drafting;
-    e['h-pause'].hidden = !(game.started && game.paused && !game.finished);
-    e['h-wait'].hidden = game.started;
+    e['h-pause'].hidden = true;
+    const waiting = !game.started || (game.paused && !game.finished);
+    e['h-wait'].hidden = !waiting;
+    setText(e['h-wait'], game.started ? 'Paused · pedal to resume' : 'Start pedalling to begin');
     e['h-sim'].hidden = !simActive;
 
     // score & combo

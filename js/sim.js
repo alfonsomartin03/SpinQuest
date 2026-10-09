@@ -7,6 +7,7 @@ export class Sim {
     this.profile = profile;
     this.offset = 0; // manual adjustment from the keyboard
     this.sprint = false;
+    this.stopped = false; // simulates the rider stopping pedalling
     this.power = 0;
     this.hr = 72;
     this.phase = Math.random() * 10;
@@ -16,7 +17,8 @@ export class Sim {
   update(dt, targetWatts) {
     const { ftp, maxHr } = this.profile;
     const base = targetWatts ?? 0.62 * ftp;
-    const goal = Math.max(0, base + this.offset + (this.sprint ? 450 : 0));
+    const goal = this.stopped ? 0 : Math.max(0, base + this.offset + (this.sprint ? 450 : 0));
+    if (this.stopped) this.power = 0;
     this.power += (goal - this.power) * (1 - Math.exp(-dt / 1.2));
     this.phase += dt;
     const wobble = 1 + 0.04 * Math.sin(this.phase * 2.3) + 0.03 * Math.sin(this.phase * 5.1);

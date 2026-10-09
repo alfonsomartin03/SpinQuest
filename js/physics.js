@@ -19,6 +19,14 @@ export function speedFromPower(power, grade, mass, drag = 1) {
   return Math.min(lo, 22);
 }
 
+/** Power (W) needed to hold speed `v` (m/s): the inverse of speedFromPower. */
+export function powerFromSpeed(v, grade, mass, drag = 1) {
+  const theta = Math.atan(grade);
+  const a = 0.5 * 1.2 * 0.32 * drag;
+  const b = mass * G * (0.004 * Math.cos(theta) + Math.sin(theta));
+  return Math.max(0, (a * v * v * v + b * v) / 0.975);
+}
+
 // ---- Course (see course.js) ----------------------------------------------------
 
 export { LOOP, elevation, gradeAt, START, SEGMENTS } from './course.js';

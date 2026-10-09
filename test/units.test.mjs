@@ -1,8 +1,9 @@
 // Run with: node --test spinquest/test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseIndoorBikeData, parseCyclingPower, parseHeartRate } from '../js/ble.js';
-import { speedFromPower, gradeAt, elevation, LOOP, SEGMENTS, powerZone, levelFor, xpForLevel } from '../js/physics.js';
+import { parseIndoorBikeData, parseCyclingPower, parseHeartRate, encodeTargetPower, parseControlResponse, TrainerControl, UUID } from '../js/ble.js';
+import { VirtualGears, slew, GEAR_RATIOS } from '../js/gearing.js';
+import { speedFromPower, powerFromSpeed, gradeAt, elevation, LOOP, SEGMENTS, powerZone, levelFor, xpForLevel } from '../js/physics.js';
 import { WORKOUTS, workoutAt, totalDuration } from '../js/workouts.js';
 import { Game } from '../js/game.js';
 import { posAt, headingAt, LANDMARKS, envAt } from '../js/course.js';
@@ -114,4 +115,161 @@ test('game: workout target tracking builds a combo and auto-pauses on silence', 
   for (let i = 0; i < 8 * 20; i++) g.update(0.05, { power: 0, cadence: 0, hr: 100 });
   assert.ok(g.paused);
   assert.ok(g.t - tClock < 6, 'timers stop while paused');
+});
+
+test('FTMS control point encoding and responses', () => {
+  assert.deepEqual([...encodeTargetPower(250)], [0x05, 250, 0]);
+  assert.deepEqual([...encodeTargetPower(1000)], [0x05, 0xe8, 0x03]);
+  assert.deepEqual([...encodeTargetPower(-5)], [0x05, 0, 0]);
+  assert.deepEqual(parseControlResponse(view([0x80, 0x00, 0x01])), { op: 0, result: 1, ok: true });
+  assert.equal(parseControlResponse(view([0x80, 0x00, 0x05])).ok, false);
+  assert.equal(parseControlResponse(view([0x01, 0x02])), null);
+});
+
+// A fake FTMS service: records writes and replies to "request control" like a real trainer.
+function fakeFtms({ reply = 0x01, targetFeature = 1 << 3, hasControl = true } = {}) {
+  const writes = [];
+  const handlers = [];
+  const cp = {
+    addEventListener: (_, h) => handlers.push(h),
+    startNotifications: async () => {},
+    writeValueWithResponse: async (bytes) => {
+      writes.push([...bytes]);
+      if (bytes[0] === 0x00) setTimeout(() => handlers.forEach((h) => h({ target: { value: view([0x80, 0x00, reply]) } })), 0);
+    },
+  };
+  const feature = { readValue: async () => { const dv = new DataView(new ArrayBuffer(8)); dv.setUint32(4, targetFeature, true); return dv; } };
+  const service = {
+    getCharacteristic: async (id) => {
+      if (id === UUID.FTMS_CONTROL && hasControl) return cp;
+      if (id === UUID.FTMS_FEATURE) return feature;
+      throw new Error('missing');
+    },
+  };
+  return { service, writes };
+}
+const tick = () => new Promise((r) => setTimeout(r, 10));
+
+test('trainer control: acquire, hold power, release', async () => {
+  const { service, writes } = fakeFtms();
+  const c = new TrainerControl();
+  assert.equal(c.state, 'none');
+  await c.attach(service);
+  assert.equal(c.state, 'idle');
+  c.setTargetPower(200); // ignored until we have control
+  assert.equal(writes.length, 0);
+  c.acquire();
+  await tick();
+  assert.equal(c.state, 'ready');
+  assert.deepEqual(writes.slice(0, 2), [[0x00], [0x07]]); // request control, then start
+  c.setTargetPower(180.4);
+  c.setTargetPower(180); // duplicate, not re-sent
+  await tick();
+  assert.deepEqual(writes.filter((w) => w[0] === 0x05), [[0x05, 180, 0]]);
+  c.release();
+  await tick();
+  assert.equal(c.state, 'idle');
+  assert.ok(writes.some((w) => w[0] === 0x08)); // stop
+  assert.deepEqual(writes.filter((w) => w[0] === 0x05).pop(), [0x05, 0, 0]); // resistance released
+});
+
+test('trainer control: denied, unsupported and missing control point', async () => {
+  const denied = fakeFtms({ reply: 0x05 });
+  const c1 = new TrainerControl();
+  await c1.attach(denied.service);
+  c1.acquire();
+  await tick();
+  assert.equal(c1.state, 'denied');
+  assert.match(c1.reason, /Another app/);
+
+  const noTarget = new TrainerControl();
+  await noTarget.attach(fakeFtms({ targetFeature: 0 }).service);
+  assert.equal(noTarget.state, 'none');
+
+  const noCp = new TrainerControl();
+  await noCp.attach(fakeFtms({ hasControl: false }).service);
+  assert.equal(noCp.state, 'none');
+});
+
+test('physics: powerFromSpeed inverts speedFromPower', () => {
+  for (const [p, g, d] of [[100, 0, 1], [250, 0.05, 1], [180, -0.03, 0.7], [400, 0.08, 1]]) {
+    const v = speedFromPower(p, g, 84, d);
+    assert.ok(Math.abs(powerFromSpeed(v, g, 84, d) - p) < 1, `${p}W ${g}`);
+  }
+  assert.equal(powerFromSpeed(0, 0, 84), 0);
+});
+
+test('virtual gears: natural cadence on flat, climbs need an easier gear', () => {
+  const g = new VirtualGears({ auto: false });
+  const flat = g.targetPower({ cadence: 90, grade: 0, mass: 84 });
+  assert.ok(flat > 120 && flat < 260, `flat power at 90 rpm ${flat}`);
+  const climb = g.targetPower({ cadence: 90, grade: 0.06, mass: 84 });
+  assert.ok(climb > 2 * flat, 'steep road at the same gear and cadence is much harder');
+  while (g.targetPower({ cadence: 90, grade: 0.06, mass: 84 }) > 330) g.shift(-1);
+  assert.ok(g.gear < 17, 'shifted to an easier gear');
+  assert.ok(g.targetPower({ cadence: 60, grade: 0, mass: 84 }) < flat, 'slower cadence = less resistance (no ERG death spiral)');
+  assert.ok(GEAR_RATIOS[0] < GEAR_RATIOS.at(-1));
+  assert.equal(g.targetPower({ cadence: 0, grade: 0, mass: 84 }), 0);
+});
+
+test('virtual gears: auto-shift follows the comfortable range', () => {
+  const g = new VirtualGears({ auto: true }); // default 80-100 rpm
+  const start = g.gear;
+  for (let i = 0; i < 100; i++) g.update(0.1, 106); // above the range for 10 s
+  assert.ok(g.gear > start, 'shifted harder');
+  const hi = g.gear;
+  for (let i = 0; i < 100; i++) g.update(0.1, 74); // below the range
+  assert.ok(g.gear < hi, 'shifted easier');
+
+  const inside = new VirtualGears({ auto: true });
+  for (let i = 0; i < 200; i++) inside.update(0.1, 90);
+  assert.equal(inside.gear, 17, 'no shifting inside the range');
+
+  const sprint = new VirtualGears({ auto: true });
+  for (let i = 0; i < 200; i++) sprint.update(0.1, 135);
+  assert.equal(sprint.gear, 17, 'sprints are left alone');
+
+  const custom = new VirtualGears({ auto: true, low: 70, high: 90 });
+  for (let i = 0; i < 100; i++) custom.update(0.1, 76);
+  assert.equal(custom.gear, 17, '76 rpm is fine for a 70-90 range');
+  for (let i = 0; i < 100; i++) custom.update(0.1, 96);
+  assert.ok(custom.gear > 17, '96 rpm is too fast for a 70-90 range');
+
+  const m = new VirtualGears({ auto: true });
+  m.shift(-1); // manual
+  const held = m.gear;
+  for (let i = 0; i < 50; i++) m.update(0.1, 108);
+  assert.equal(m.gear, held, 'auto-shift waits after a manual shift');
+  const idle = new VirtualGears({ auto: true });
+  for (let i = 0; i < 100; i++) idle.update(0.1, 0);
+  assert.equal(idle.gear, 17, 'no shifting while not pedalling');
+});
+
+test('game: stopping pedalling brakes to a halt (even downhill) and pauses', () => {
+  const progress = { xp: 0, ach: {}, segPR: {}, discovered: {} };
+  const g = new Game({ profile: { name: 'T', weight: 75, ftp: 200, maxHr: 190 }, workout: WORKOUTS[0], progress });
+  g.user.x = 5700; // a steep descent
+  for (let i = 0; i < 20 * 20; i++) g.update(0.05, { power: 200, cadence: 90, hr: 120 });
+  assert.ok(g.user.v > 8, 'rolling');
+  assert.ok(!g.paused);
+  const tStop = g.t;
+  let pausedAt = null;
+  for (let i = 0; i < 12 * 20; i++) {
+    g.update(0.05, { power: 0, cadence: 0, hr: 100 });
+    if (g.paused && pausedAt == null) pausedAt = i * 0.05;
+  }
+  assert.ok(g.user.v < 0.01, `stopped, v=${g.user.v}`);
+  assert.ok(pausedAt != null && pausedAt <= 3.2, `paused after ${pausedAt}s`);
+  assert.ok(g.t - tStop < 3.5, 'ride time stops counting');
+  const x = g.user.x;
+  for (let i = 0; i < 40; i++) g.update(0.05, { power: 0, cadence: 0, hr: 100 });
+  assert.equal(g.user.x, x, 'no creeping while paused');
+  for (let i = 0; i < 20; i++) g.update(0.05, { power: 150, cadence: 85, hr: 100 });
+  assert.ok(!g.paused, 'resumes when pedalling again');
+});
+
+test('slew limits rises but not drops', () => {
+  assert.equal(slew(null, 500, 1), 500);
+  assert.equal(slew(100, 900, 1, 300), 400);
+  assert.equal(slew(400, 50, 1), 50);
 });

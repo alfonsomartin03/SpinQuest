@@ -185,17 +185,17 @@ export const BRIDGE = { x: 7020, half: 9 };
 
 export const LANDMARKS = [
   { id: 'start', name: 'Start / Finish', d: 0, lat: 0, kind: 'arch', emoji: '🏁' },
-  { id: 'windmill1', name: 'Old Windmill', d: 850, lat: -16, kind: 'windmill', emoji: '🌀' },
+  { id: 'windmill1', name: 'Old Windmill', d: 850, lat: -20, kind: 'windmill', emoji: '🌀' },
   { id: 'cows', name: 'Cow Pasture', d: 1250, lat: 13, kind: 'cows', emoji: '🐄' },
-  { id: 'cabin', name: 'Logger Cabin', d: 2150, lat: 11, kind: 'cabin', emoji: '🛖' },
+  { id: 'cabin', name: 'Logger Cabin', d: 2150, lat: 17, kind: 'cabin', emoji: '🛖' },
   { id: 'tunnel', name: 'Rock Tunnel', d: 3400, lat: 0, kind: 'tunnel', emoji: '🚇' },
   { id: 'summit', name: 'Summit 1,374 m', d: 4600, lat: 0, kind: 'summit', emoji: '🏔️' },
-  { id: 'castle', name: 'Hilltop Castle', d: 5900, lat: 46, kind: 'castle', emoji: '🏰' },
+  { id: 'castle', name: 'Hilltop Castle', d: 5900, lat: 95, kind: 'castle', emoji: '🏰' },
   { id: 'bridge', name: 'Covered Bridge', d: 7020, lat: 0, kind: 'bridge', emoji: '🌉' },
-  { id: 'lighthouse', name: 'Lighthouse', d: 7700, lat: -19, kind: 'lighthouse', emoji: '🗼' },
+  { id: 'lighthouse', name: 'Lighthouse', d: 7700, lat: -52, kind: 'lighthouse', emoji: '🗼' },
   { id: 'market', name: 'Market Square', d: 8620, lat: 9, kind: 'market', emoji: '🎪' },
-  { id: 'church', name: 'Village Church', d: 8850, lat: -13, kind: 'church', emoji: '⛪' },
-  { id: 'windmill2', name: 'Harvest Mill', d: 9750, lat: 15, kind: 'windmill', emoji: '🌾' },
+  { id: 'church', name: 'Village Church', d: 8850, lat: -19, kind: 'church', emoji: '⛪' },
+  { id: 'windmill2', name: 'Harvest Mill', d: 9750, lat: 20, kind: 'windmill', emoji: '🌾' },
 ];
 
 // ---- Timed segments ---------------------------------------------------------------------------
