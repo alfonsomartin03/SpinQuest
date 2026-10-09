@@ -151,7 +151,7 @@ export class Game {
     this.#world();
 
     this.pz = powerZone(this.pSmooth, this.profile.ftp);
-    this.hz = this.hr != null ? hrZone(this.hr, this.profile.maxHr) : -1;
+    this.hz = this.hr != null ? hrZone(this.hr, this.profile.maxHr, this.profile.hrLimits) : -1;
 
     if (active) {
       this.t += dt;
@@ -368,7 +368,7 @@ export class Game {
       this.sumHr += this.hr * dt;
       this.hrTime += dt;
       this.maxHr = Math.max(this.maxHr, this.hr);
-      this.zoneHr[hrZone(this.hr, this.profile.maxHr)] += dt;
+      this.zoneHr[hrZone(this.hr, this.profile.maxHr, this.profile.hrLimits)] += dt;
     }
     if (this.user.drafting) this.draftTime += dt;
     this.secP += pw; this.secN++;

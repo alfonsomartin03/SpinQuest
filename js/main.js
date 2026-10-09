@@ -13,7 +13,7 @@ import { LoopbackSession, DemoPeers } from './net.js';
 import { initAudio, sfx, setMuted, isMuted } from './audio.js';
 import { ACHIEVEMENTS } from './achievements.js';
 import { LANDMARKS } from './course.js';
-import { levelFor, levelTitle, xpForLevel } from './physics.js';
+import { levelFor, levelTitle, xpForLevel, defaultHrLimits, cleanHrLimits } from './physics.js';
 
 window.__sqLoaded = true;
 const $ = (id) => document.getElementById(id);
@@ -26,7 +26,7 @@ const store = {
   },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
 };
-const profile = store.get('spinquest.profile', { name: '', weight: 75, ftp: 200, maxHr: 190, workout: 'free', control: 'gears', autoShift: true, cadLow: 80, cadHigh: 100 });
+const profile = store.get('spinquest.profile', { name: '', weight: 75, ftp: 200, maxHr: 190, workout: 'free', control: 'gears', autoShift: true, cadLow: 80, cadHigh: 100, hrLimits: null });
 const progress = store.get('spinquest.progress', { xp: 0, rides: 0, km: 0 });
 const known = store.get('spinquest.devices', {}); // last-used device per kind, for one-tap reconnect
 progress.ach ||= {};
@@ -78,6 +78,21 @@ if (!bluetoothSupported()) {
   $('bt-warning').hidden = false;
 }
 
+/** Custom HR zone ceilings from the menu, or null while they are just following Max HR. */
+function readHrLimits() {
+  if ($('hrzones').dataset.custom !== '1') return null;
+  return cleanHrLimits([1, 2, 3, 4].map((i) => parseFloat($(`hrz-${i}`).value))) ?? profile.hrLimits; // half-typed: keep the last good set
+}
+
+function showHrLimits() {
+  const custom = cleanHrLimits(profile.hrLimits);
+  const maxHr = parseFloat($('p-maxhr').value) || profile.maxHr;
+  $('hrzones').dataset.custom = custom ? '1' : '0';
+  (custom ?? defaultHrLimits(maxHr)).forEach((v, i) => { $(`hrz-${i + 1}`).value = v; });
+  $('hrz-note').textContent = custom ? '(custom)' : '(from Max HR)';
+  $('hrz-reset').hidden = !custom;
+}
+
 function readProfile() {
   const num = (id, lo, hi, d) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
   Object.assign(profile, {
@@ -90,6 +105,7 @@ function readProfile() {
     autoShift: $('autoshift').checked,
     cadLow: num('cad-low', 50, 110, 80),
     cadHigh: num('cad-high', 60, 130, 100),
+    hrLimits: readHrLimits(),
   });
   if (profile.cadHigh < profile.cadLow + 10) profile.cadHigh = profile.cadLow + 10; // keep a usable window
   store.set('spinquest.profile', profile);
@@ -101,6 +117,7 @@ function fillMenu() {
   $('p-weight').value = profile.weight;
   $('p-ftp').value = profile.ftp;
   $('p-maxhr').value = profile.maxHr;
+  showHrLimits();
   $('workout').innerHTML = WORKOUTS.map((w) => `<option value="${w.id}">${w.name}</option>`).join('');
   $('workout').value = WORKOUTS.some((w) => w.id === profile.workout) ? profile.workout : 'free';
   const radio = document.querySelector(`input[name=ctlmode][value=${profile.control}]`);
@@ -137,6 +154,16 @@ function refreshMenu() {
   $('cadrange').classList.toggle('off', !p.autoShift);
   $('cad-low').disabled = $('cad-high').disabled = !p.autoShift;
 }
+// HR zones: typing in a zone box makes them custom; until then they follow Max HR
+[1, 2, 3, 4].forEach((i) => $(`hrz-${i}`).addEventListener('input', () => {
+  $('hrzones').dataset.custom = '1';
+  $('hrz-note').textContent = '(custom)';
+  $('hrz-reset').hidden = false;
+}));
+$('p-maxhr').addEventListener('input', () => {
+  if ($('hrzones').dataset.custom !== '1') defaultHrLimits(parseFloat($('p-maxhr').value) || profile.maxHr).forEach((v, i) => { $(`hrz-${i + 1}`).value = v; });
+});
+$('hrz-reset').addEventListener('click', () => { profile.hrLimits = null; showHrLimits(); refreshMenu(); });
 document.querySelectorAll('#menu input, #menu select').forEach((el) => el.addEventListener('input', refreshMenu));
 for (const id of ['cad-low', 'cad-high']) { // tidy the numbers once typing is finished
   $(id).addEventListener('change', () => { readProfile(); $('cad-low').value = profile.cadLow; $('cad-high').value = profile.cadHigh; });

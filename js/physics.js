@@ -56,7 +56,19 @@ const zoneIndex = (zones, frac) => {
   return i < 0 ? zones.length - 1 : i;
 };
 export const powerZone = (watts, ftp) => zoneIndex(POWER_ZONES, watts / ftp);
-export const hrZone = (hr, maxHr) => zoneIndex(HR_ZONES, hr / maxHr);
+/** Default zone ceilings in bpm (zones 1 to 4) for a max HR. */
+export const defaultHrLimits = (maxHr) => HR_ZONES.slice(0, -1).map((z) => Math.round(z.max * maxHr));
+/** Make custom ceilings usable: four ascending whole numbers, or null (use % of max HR). */
+export const cleanHrLimits = (limits) => {
+  if (!Array.isArray(limits) || limits.length !== HR_ZONES.length - 1) return null;
+  const out = limits.map(Math.round);
+  return out.every((v, i) => Number.isFinite(v) && v > 0 && (i === 0 || v > out[i - 1])) ? out : null;
+};
+/** Zone index for a heart rate. `limits` are optional custom bpm ceilings for zones 1 to 4. */
+export const hrZone = (hr, maxHr, limits = null) => {
+  const l = cleanHrLimits(limits);
+  return l ? zoneIndex(l.map((v) => ({ max: v })).concat({ max: Infinity }), hr) : zoneIndex(HR_ZONES, hr / maxHr);
+};
 
 // ---- Levels -----------------------------------------------------------------
 

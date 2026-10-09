@@ -52,7 +52,7 @@
     <section class="device ctl" id="ctl" hidden>
       <div class="dev-head"><h3>Trainer resistance</h3></div>
       <p class="small" id="ctl-note"></p>
-      <label class="radio"><input type="radio" name="ctlmode" value="gears" checked><span><b>Cadence control</b> Keeps your cadence inside your range with a Zwift Cog or any fixed gear. Resistance firms up only when you reach the top of your range and eases off when your cadence drops, so you never lock up, grind or spin out.</span></label>
+      <label class="radio"><input type="radio" name="ctlmode" value="gears" checked><span><b>Cadence control</b> Gently holds your cadence near the middle of your range with a Zwift Cog or any fixed gear. Resistance makes small, quick adjustments: it firms up a little as you speed up and eases as you slow, so you never lock up, grind or spin out.</span></label>
       <label class="radio"><input type="radio" name="ctlmode" value="erg"><span><b>ERG</b> The trainer holds each workout interval's power for you, with a guard that eases it if you start grinding below your cadence range. Free rides use cadence control.</span></label>
       <label class="radio"><input type="radio" name="ctlmode" value="off"><span><b>Listen only</b> You control resistance yourself, for example with a real cassette.</span></label>
       <label class="small check"><input type="checkbox" id="autoshift" checked> Auto-shift to keep my cadence in my comfortable range</label>
@@ -71,6 +71,17 @@
         <label>FTP (W) <input id="p-ftp" type="number" min="50" max="600" value="200"></label>
         <label>Max HR (bpm) <input id="p-maxhr" type="number" min="120" max="230" value="190"></label>
       </div>
+      <details class="hrzones" id="hrzones">
+        <summary>Heart-rate zones <small id="hrz-note"></small></summary>
+        <div class="fields" id="hrz-fields">
+          <label>Easy up to <input id="hrz-1" type="number" min="40" max="230"></label>
+          <label>Aerobic up to <input id="hrz-2" type="number" min="40" max="230"></label>
+          <label>Tempo up to <input id="hrz-3" type="number" min="40" max="230"></label>
+          <label>Threshold up to <input id="hrz-4" type="number" min="40" max="230"></label>
+        </div>
+        <p class="small">Upper limit of each zone in bpm; anything above Threshold is Max. Start from your own lab, field-test or watch zones. Until you change a number the zones follow Max HR (60, 70, 80 and 90%).
+          <button class="btn" type="button" id="hrz-reset">Reset to % of max HR</button></p>
+      </details>
     </section>
 
     <section class="workout-pick">

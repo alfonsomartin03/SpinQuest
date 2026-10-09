@@ -378,3 +378,14 @@ test('demo peers publish through the loopback with latency and packRider round-t
   const rider = { id: 'a', name: 'A', color: '#112233', x: 5, lat: 1, v: 9, cad: 80, weight: 70, ftp: 250 };
   assert.deepEqual(sanitizeState(packRider(rider, { power: 200, hr: 140, now: 1 })).id, 'a');
 });
+
+test('custom heart-rate zone limits', async () => {
+  const { hrZone, defaultHrLimits, cleanHrLimits } = await import('../js/physics.js');
+  assert.equal(hrZone(150, 190), hrZone(150, 190, null));
+  assert.deepEqual(defaultHrLimits(200), [120, 140, 160, 180]);
+  assert.equal(hrZone(125, 190, [130, 145, 160, 175]), 0);
+  assert.equal(hrZone(146, 190, [130, 145, 160, 175]), 2);
+  assert.equal(hrZone(200, 190, [130, 145, 160, 175]), 4);
+  assert.equal(cleanHrLimits([140, 130, 160, 170]), null, 'must ascend');
+  assert.equal(hrZone(150, 190, [140, 130, 160, 170]), hrZone(150, 190), 'bad limits fall back to % of max');
+});
