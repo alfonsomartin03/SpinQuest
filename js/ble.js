@@ -12,6 +12,17 @@ export const UUID = {
   FTMS_FEATURE: 0x2acc,
 };
 
+// Zwift Click (the handlebar shifter): a custom Zwift service. Writing "RideOn" to the sync-rx characteristic
+// starts it sending button frames. Protocol per the community reverse engineering (qdomyos-zwift's zwift_play).
+export const ZWIFT = {
+  SERVICE: '00000001-19ca-4651-86e5-fa29dcdd09d1',
+  ASYNC: '00000002-19ca-4651-86e5-fa29dcdd09d1',
+  SYNC_RX: '00000003-19ca-4651-86e5-fa29dcdd09d1',
+  SYNC_TX: '00000004-19ca-4651-86e5-fa29dcdd09d1',
+  MANUFACTURER: 0x094a, // 2378, Zwift, Inc
+  RIDE_ON: Uint8Array.of(0x52, 0x69, 0x64, 0x65, 0x4f, 0x6e),
+};
+
 // ---- Parsers (pure functions, unit tested) ---------------------------------
 
 /** FTMS Indoor Bike Data. Returns any of {speed (km/h), cadence (rpm), power (W), hr (bpm)}. */
@@ -63,6 +74,23 @@ export function parseCyclingPower(dv, state = {}) {
 /** Heart Rate Measurement. */
 export function parseHeartRate(dv) {
   return { hr: dv.getUint8(0) & 0x01 ? dv.getUint16(1, true) : dv.getUint8(1) };
+}
+
+/**
+ * Zwift Click button frame: 0x37, then two button bytes (at 2 and 4) that read 0 while that button is held.
+ * Returns the buttons that were just pressed: 'plus' (right, harder) and/or 'minus' (left, easier).
+ * `state` remembers what was held so a held button fires once.
+ */
+export function parseClickButtons(dv, state = {}) {
+  if (dv.byteLength !== 5 || dv.getUint8(0) !== 0x37) return [];
+  const plus = dv.getUint8(2) === 0;
+  const minus = dv.getUint8(4) === 0;
+  const out = [];
+  if (plus && !state.plus) out.push('plus');
+  if (minus && !state.minus) out.push('minus');
+  state.plus = plus;
+  state.minus = minus;
+  return out;
 }
 
 // ---- FTMS control point (resistance control) ------------------------------------------------
@@ -208,7 +236,14 @@ const HR_NAMES = [
 ];
 
 async function request(kind, all) {
-  const optionalServices = [UUID.FTMS, UUID.CPS, UUID.HRS];
+  const optionalServices = [UUID.FTMS, UUID.CPS, UUID.HRS, ZWIFT.SERVICE];
+  if (kind === 'click') {
+    if (all) return navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices });
+    return navigator.bluetooth.requestDevice({
+      filters: [{ services: [ZWIFT.SERVICE] }, { manufacturerData: [{ companyIdentifier: ZWIFT.MANUFACTURER }] }, { namePrefix: 'Zwift' }],
+      optionalServices,
+    });
+  }
   if (all) return navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices });
   const services = kind === 'hr' ? [UUID.HRS] : [UUID.FTMS, UUID.CPS];
   const names = kind === 'hr' ? HR_NAMES : TRAINER_NAMES;
@@ -338,6 +373,23 @@ export async function connectHeartRate(emit, onStatus, { all = false, device = n
   const link = new Link(device, async (server) => {
     const svc = await server.getPrimaryService(UUID.HRS);
     await notify(svc, UUID.HR_MEASUREMENT, (dv) => emit(parseHeartRate(dv)));
+  }, onStatus);
+  await link.open();
+  return link;
+}
+
+/** Connect a Zwift Click. `onShift(+1 | -1)` fires on each press (+1 = right button, harder). */
+export async function connectClick(onShift, onStatus, { all = false, device = null } = {}) {
+  if (device) await awaken(device);
+  device ||= await request('click', all);
+  const link = new Link(device, async (server) => {
+    const svc = await server.getPrimaryService(ZWIFT.SERVICE);
+    const state = {};
+    const handle = (dv) => { for (const b of parseClickButtons(dv, state)) onShift(b === 'plus' ? 1 : -1); };
+    await notify(svc, ZWIFT.ASYNC, handle);
+    try { await notify(svc, ZWIFT.SYNC_TX, handle); } catch { /* optional */ }
+    const rx = await svc.getCharacteristic(ZWIFT.SYNC_RX);
+    await (rx.writeValueWithoutResponse ? rx.writeValueWithoutResponse(ZWIFT.RIDE_ON) : rx.writeValue(ZWIFT.RIDE_ON));
   }, onStatus);
   await link.open();
   return link;

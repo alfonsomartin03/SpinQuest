@@ -6,7 +6,7 @@ import { Hud, toast, showSummary, drawWorkoutProfile } from './hud.js';
 import { WORKOUTS } from './workouts.js';
 import { Sim } from './sim.js';
 import {
-  DataHub, connectTrainer, connectHeartRate, bluetoothSupported, bluetoothProblem, explainError, getKnownDevices,
+  DataHub, connectTrainer, connectHeartRate, connectClick, bluetoothSupported, bluetoothProblem, explainError, getKnownDevices,
 } from './ble.js';
 import { VirtualGears, ResistanceControl, ergGuard, slew } from './gearing.js';
 import { LoopbackSession, DemoPeers } from './net.js';
@@ -26,7 +26,7 @@ const store = {
   },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
 };
-const profile = store.get('spinquest.profile', { name: '', weight: 75, ftp: 200, maxHr: 190, workout: 'free', control: 'gears', autoShift: true, cadLow: 80, cadHigh: 100, hrLimits: null });
+const profile = store.get('spinquest.profile', { name: '', weight: 75, ftp: 200, maxHr: 190, workout: 'free', control: 'gears', autoShift: true, cadLow: 80, cadHigh: 100, hrLimits: null, clickSwap: false });
 const progress = store.get('spinquest.progress', { xp: 0, rides: 0, km: 0 });
 const known = store.get('spinquest.devices', {}); // last-used device per kind, for one-tap reconnect
 progress.ach ||= {};
@@ -37,7 +37,7 @@ const saveProgress = () => store.set('spinquest.progress', progress);
 // ---- state ----------------------------------------------------------------------------
 
 const hub = new DataHub();
-const links = { trainer: null, hr: null };
+const links = { trainer: null, hr: null, click: null };
 const renderer = new Renderer($('scene'));
 addEventListener('resize', () => renderer.resize());
 const hud = new Hud();
@@ -106,6 +106,7 @@ function readProfile() {
     cadLow: num('cad-low', 50, 110, 80),
     cadHigh: num('cad-high', 60, 130, 100),
     hrLimits: readHrLimits(),
+    clickSwap: $('click-swap').checked,
   });
   if (profile.cadHigh < profile.cadLow + 10) profile.cadHigh = profile.cadLow + 10; // keep a usable window
   store.set('spinquest.profile', profile);
@@ -118,6 +119,7 @@ function fillMenu() {
   $('p-ftp').value = profile.ftp;
   $('p-maxhr').value = profile.maxHr;
   showHrLimits();
+  $('click-swap').checked = !!profile.clickSwap;
   $('workout').innerHTML = WORKOUTS.map((w) => `<option value="${w.id}">${w.name}</option>`).join('');
   $('workout').value = WORKOUTS.some((w) => w.id === profile.workout) ? profile.workout : 'free';
   const radio = document.querySelector(`input[name=ctlmode][value=${profile.control}]`);
@@ -190,8 +192,11 @@ function updateControlUi() {
   refreshMenu();
 }
 
+const CARD = { trainer: 'dev-trainer', hr: 'dev-hr', click: 'dev-click' };
+const KINDS = Object.keys(CARD);
+
 function deviceUi(kind) {
-  const card = $(kind === 'trainer' ? 'dev-trainer' : 'dev-hr');
+  const card = $(CARD[kind]);
   const status = card.querySelector('[data-status]');
   const btn = card.querySelector('[data-connect]');
   return (state, name) => {
@@ -203,7 +208,7 @@ function deviceUi(kind) {
     btn.textContent = state === 'connected' ? 'Disconnect' : 'Connect';
     if (state === 'connected') card.querySelector('[data-all]').hidden = true;
     if (mode === 'ride' && ['reconnecting', 'lost', 'connected'].includes(state) && links[kind]) {
-      toast({ text: kind === 'trainer' ? 'Trainer' : 'HR strap', sub: status.textContent, kind: state === 'connected' ? 'go' : 'combo' });
+      toast({ text: { trainer: 'Trainer', hr: 'HR strap', click: 'Zwift Click' }[kind], sub: status.textContent, kind: state === 'connected' ? 'go' : 'combo' });
     }
     refreshMenu();
   };
@@ -211,7 +216,7 @@ function deviceUi(kind) {
 
 /** Connect (or disconnect) a device. `opts.device` reconnects a remembered one without the picker. */
 async function connectDevice(kind, opts = {}) {
-  const card = $(kind === 'trainer' ? 'dev-trainer' : 'dev-hr');
+  const card = $(CARD[kind]);
   const ui = card.ui;
   const statusEl = card.querySelector('[data-status]');
   if (links[kind] && !opts.force) {
@@ -225,8 +230,8 @@ async function connectDevice(kind, opts = {}) {
   if (opts.device) statusEl.textContent = `Looking for ${opts.device.name || 'your device'}…`;
   card.querySelector('[data-all]').hidden = true;
   try {
-    const emit = (f) => hub.push(f);
-    const link = await (kind === 'trainer' ? connectTrainer : connectHeartRate)(emit, ui, { all: opts.all ?? $('show-all').checked, device: opts.device });
+    const emit = kind === 'click' ? (dir) => shiftGear(profile.clickSwap ? -dir : dir) : (f) => hub.push(f);
+    const link = await { trainer: connectTrainer, hr: connectHeartRate, click: connectClick }[kind](emit, ui, { all: opts.all ?? $('show-all').checked, device: opts.device });
     links[kind] = link;
     known[kind] = { id: link.device.id, name: link.name };
     store.set('spinquest.devices', known);
@@ -250,8 +255,8 @@ async function connectDevice(kind, opts = {}) {
   }
 }
 
-for (const kind of ['trainer', 'hr']) {
-  const card = $(kind === 'trainer' ? 'dev-trainer' : 'dev-hr');
+for (const kind of KINDS) {
+  const card = $(CARD[kind]);
   card.ui = deviceUi(kind);
   card.querySelector('[data-connect]').addEventListener('click', () => connectDevice(kind));
   card.querySelector('[data-all]').addEventListener('click', () => connectDevice(kind, { all: true }));
@@ -261,10 +266,10 @@ for (const kind of ['trainer', 'hr']) {
 async function offerKnownDevices() {
   if (!bluetoothSupported()) return;
   const devices = await getKnownDevices();
-  for (const kind of ['trainer', 'hr']) {
+  for (const kind of KINDS) {
     const dev = devices.find((d) => d.id === known[kind]?.id);
     if (!dev) continue;
-    const btn = $(kind === 'trainer' ? 'dev-trainer' : 'dev-hr').querySelector('[data-reconnect]');
+    const btn = $(CARD[kind]).querySelector('[data-reconnect]');
     btn.textContent = `Reconnect ${dev.name || known[kind].name}`;
     btn.hidden = false;
     btn.onclick = () => connectDevice(kind, { device: dev });

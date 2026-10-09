@@ -389,3 +389,15 @@ test('custom heart-rate zone limits', async () => {
   assert.equal(cleanHrLimits([140, 130, 160, 170]), null, 'must ascend');
   assert.equal(hrZone(150, 190, [140, 130, 160, 170]), hrZone(150, 190), 'bad limits fall back to % of max');
 });
+
+test('Zwift Click button frames fire once per press', async () => {
+  const { parseClickButtons } = await import('../js/ble.js');
+  const dv = (...b) => new DataView(Uint8Array.from(b).buffer);
+  const st = {};
+  assert.deepEqual(parseClickButtons(dv(0x37, 0x08, 0xff, 0x10, 0xff), st), [], 'idle');
+  assert.deepEqual(parseClickButtons(dv(0x37, 0x08, 0x00, 0x10, 0xff), st), ['plus']);
+  assert.deepEqual(parseClickButtons(dv(0x37, 0x08, 0x00, 0x10, 0xff), st), [], 'held: no repeat');
+  assert.deepEqual(parseClickButtons(dv(0x37, 0x08, 0xff, 0x10, 0xff), st), [], 'released');
+  assert.deepEqual(parseClickButtons(dv(0x37, 0x08, 0xff, 0x10, 0x00), st), ['minus']);
+  assert.deepEqual(parseClickButtons(dv(0x01, 0x03), st), [], 'handshake reply ignored');
+});

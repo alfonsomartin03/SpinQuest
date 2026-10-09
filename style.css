@@ -28,7 +28,7 @@ h3 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08
 h4 { margin: 0 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 header p { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
 .warning { background: rgba(245, 197, 66, 0.12); border: 1px solid rgba(245, 197, 66, 0.4); padding: 10px 14px; border-radius: 12px; margin-bottom: 14px; font-size: 14px; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
 .device { border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
 .device.connected { border-color: rgba(62, 207, 110, 0.6); background: rgba(62, 207, 110, 0.06); }
 .device.reconnecting { border-color: rgba(245, 197, 66, 0.6); }
