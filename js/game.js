@@ -4,6 +4,7 @@ import {
   speedFromPower, gradeAt, elevation, START, SEGMENTS, LOOP,
   powerZone, hrZone, levelFor, clamp,
 } from './physics.js';
+import { LANDMARKS, BIOMES, biomeIndex } from './course.js';
 import { workoutAt, totalDuration } from './workouts.js';
 import { ACHIEVEMENTS } from './achievements.js';
 
@@ -85,6 +86,10 @@ export class Game {
     this.grace = 0;
     this.stepIdx = -1;
     this.stepStats = { t: 0, on: 0 };
+    progress.discovered ||= {};
+    this.biome = null;
+    this.nearLm = new Set();
+    this.discoveredNow = [];
     this.level = levelFor(progress.xp);
     this.unlocked = [];
     this.segEvents = [];
@@ -122,6 +127,7 @@ export class Game {
     if (!this.paused) this.#updateBots(dt);
     this.#orbs();
     this.#segments();
+    this.#world();
 
     this.pz = powerZone(this.pSmooth, this.profile.ftp);
     this.hz = this.hr != null ? hrZone(this.hr, this.profile.maxHr) : -1;
@@ -250,6 +256,31 @@ export class Game {
     if (rank === 1 && all.length > 1) { this.segWins++; this.#sfx('win'); } else this.#sfx('segment');
     const medal = rank === 1 ? 'Segment win!' : `Finished ${rank}${['st', 'nd', 'rd'][rank - 1] || 'th'} of ${all.length}`;
     this.#toast(seg.name, `${medal}  ·  ${time.toFixed(1)}s${isPR ? '  ·  NEW PR' : ''}  ·  +${pts * this.mult}`, rank === 1 ? 'win' : 'seg');
+  }
+
+  /** Zone changes and landmark discoveries. */
+  #world() {
+    const phase = ((this.user.x % LOOP) + LOOP) % LOOP;
+    const bi = biomeIndex(phase);
+    if (bi !== this.biome) {
+      this.biome = bi;
+      this.#toast(BIOMES[bi].name.toUpperCase(), BIOMES[bi].blurb, 'zone');
+    }
+    for (const lm of LANDMARKS) {
+      let d = Math.abs(phase - lm.d);
+      d = Math.min(d, LOOP - d);
+      const near = d < 35;
+      if (near && !this.nearLm.has(lm.id)) {
+        this.nearLm.add(lm.id);
+        if (!this.progress.discovered[lm.id]) {
+          this.progress.discovered[lm.id] = Date.now();
+          this.discoveredNow.push(lm.id);
+          this.score += 100;
+          this.#toast(`${lm.emoji} ${lm.name}`, `Landmark discovered  ·  ${Object.keys(this.progress.discovered).length}/${LANDMARKS.length}  ·  +100`, 'ach');
+          this.#sfx('ach');
+        }
+      } else if (d > 120) this.nearLm.delete(lm.id);
+    }
   }
 
   // ---- stats, workout, scoring ------------------------------------------------
@@ -381,6 +412,7 @@ export class Game {
       zoneHr: this.zoneHr,
       samples: this.samples,
       unlocked: this.unlocked,
+      discovered: this.discoveredNow,
       workout: this.workout,
       completed: this.finished,
     };

@@ -8,6 +8,7 @@ import { Sim } from './sim.js';
 import { DataHub, connectTrainer, connectHeartRate, bluetoothSupported, bluetoothProblem, explainError } from './ble.js';
 import { initAudio, sfx, setMuted, isMuted } from './audio.js';
 import { ACHIEVEMENTS } from './achievements.js';
+import { LANDMARKS } from './course.js';
 import { levelFor, levelTitle, xpForLevel } from './physics.js';
 
 window.__sqLoaded = true;
@@ -25,6 +26,7 @@ const profile = store.get('spinquest.profile', { name: '', weight: 75, ftp: 200,
 const progress = store.get('spinquest.progress', { xp: 0, rides: 0, km: 0 });
 progress.ach ||= {};
 progress.segPR ||= {};
+progress.discovered ||= {};
 const saveProgress = () => store.set('spinquest.progress', progress);
 
 // ---- state ----------------------------------------------------------------------------
@@ -81,7 +83,7 @@ function refreshMenu() {
   $('m-level').textContent = `Level ${lvl}`;
   $('m-title').textContent = levelTitle(lvl);
   $('m-xpbar').style.width = `${((progress.xp - xpForLevel(lvl)) / (xpForLevel(lvl + 1) - xpForLevel(lvl))) * 100}%`;
-  $('m-xp').textContent = `${progress.xp.toLocaleString()} XP · ${Object.keys(progress.ach).length}/${ACHIEVEMENTS.length} achievements`;
+  $('m-xp').textContent = `${progress.xp.toLocaleString()} XP · ${Object.keys(progress.ach).length}/${ACHIEVEMENTS.length} achievements · ${Object.keys(progress.discovered).length}/${LANDMARKS.length} landmarks`;
   const hint = links.trainer
     ? 'Set your trainer power yourself. SpinQuest only listens.'
     : 'No trainer connected: you will ride with the keyboard simulator.';

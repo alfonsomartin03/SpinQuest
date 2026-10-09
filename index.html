@@ -85,10 +85,17 @@
     <div class="tags"><span id="h-draft" class="tag" hidden>Drafting</span><span id="h-pause" class="tag warn" hidden>Paused</span></div>
   </section>
 
-  <section class="panel board" id="h-board"></section>
+  <div class="right-col">
+    <section class="panel board" id="h-board"></section>
+    <section class="panel map" id="h-mapbox" title="Click to zoom the map">
+      <canvas id="h-map" width="440" height="400"></canvas>
+      <div class="map-note" id="h-mapnote"></div>
+    </section>
+  </div>
 
   <div class="top-center">
-    <canvas id="h-mini" width="640" height="56"></canvas>
+    <div class="zone-line" id="h-zone"></div>
+    <canvas id="h-mini" width="640" height="72"></canvas>
     <div class="seg-banner" id="h-seg" hidden><b id="h-seg-name"></b><div class="bar"><i id="h-seg-bar"></i></div><span id="h-seg-time"></span></div>
   </div>
 

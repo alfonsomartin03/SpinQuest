@@ -14,4 +14,6 @@ export const ACHIEVEMENTS = [
   { id: 'dialed-in', name: 'Dialed In', desc: 'Nail an interval (90%+ on target)', test: (g) => g.perfectIntervals >= 1 },
   { id: 'max-combo', name: 'Max Combo', desc: 'Reach the x5 multiplier', test: (g) => g.mult >= 5 },
   { id: 'twenty', name: 'Twenty Club', desc: 'Ride 20 km in one go', test: (g) => g.distance >= 20000 },
+  { id: 'summit', name: 'Summit Seeker', desc: 'Reach the top of the pass', test: (g) => !!g.progress.discovered.summit },
+  { id: 'explorer', name: 'Explorer', desc: 'Discover every landmark', test: (g) => Object.keys(g.progress.discovered).length >= 12 },
 ];

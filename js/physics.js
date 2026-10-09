@@ -19,55 +19,9 @@ export function speedFromPower(power, grade, mass, drag = 1) {
   return Math.min(lo, 22);
 }
 
-// ---- Course: a seamless loop of rolling hills ------------------------------
+// ---- Course (see course.js) ----------------------------------------------------
 
-export const LOOP = 9000; // metres
-
-const TAU = Math.PI * 2;
-const phase = (d) => (((d % LOOP) + LOOP) % LOOP) / LOOP * TAU;
-
-export function elevation(d) {
-  const x = phase(d);
-  return 45 * Math.sin(x) + 18 * Math.sin(3 * x + 1) + 5 * Math.sin(7 * x + 2);
-}
-
-export function gradeAt(d) {
-  const x = phase(d);
-  return (45 * Math.cos(x) + 54 * Math.cos(3 * x + 1) + 35 * Math.cos(7 * x + 2)) * (TAU / LOOP);
-}
-
-/** A gentle spot on the loop to start from. */
-export const START = (() => {
-  for (let d = 0; d < LOOP; d += 10) {
-    if (Math.abs(gradeAt(d)) < 0.006 && gradeAt(d + 200) > 0) return d;
-  }
-  return 0;
-})();
-
-function pickSegments() {
-  const gain = (s, len) => elevation(s + len) - elevation(s);
-  const taken = [];
-  const free = (s, len) => taken.every(([a, b]) => s + len < a - 150 || s > b + 150);
-  const choose = (len, score) => {
-    let best = null;
-    for (let s = 0; s + len < LOOP; s += 25) {
-      if (!free(s, len)) continue;
-      const sc = score(s, len);
-      if (!best || sc > best.sc) best = { s, sc };
-    }
-    taken.push([best.s, best.s + len]);
-    return best.s;
-  };
-  const climbS = choose(1200, (s, l) => gain(s, l));
-  const sprintS = choose(250, (s, l) => -Math.abs(gain(s, l)) - Math.abs(gradeAt(s)) * 50);
-  const dashS = choose(300, (s, l) => -gain(s, l));
-  return [
-    { id: 'kom', name: 'Hilltop KOM', kind: 'climb', start: climbS, end: climbS + 1200, color: '#ff4d4d' },
-    { id: 'sprint', name: 'Flat-Out Sprint', kind: 'sprint', start: sprintS, end: sprintS + 250, color: '#3ecf6e' },
-    { id: 'dash', name: 'Downhill Dash', kind: 'sprint', start: dashS, end: dashS + 300, color: '#c25cff' },
-  ];
-}
-export const SEGMENTS = pickSegments();
+export { LOOP, elevation, gradeAt, START, SEGMENTS } from './course.js';
 
 // ---- Zones ------------------------------------------------------------------
 

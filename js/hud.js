@@ -3,6 +3,7 @@
 import {
   POWER_ZONES, HR_ZONES, SEGMENTS, LOOP, elevation, powerZone, levelFor, levelTitle, xpForLevel, fmtTime, clamp,
 } from './physics.js';
+import { MAP, LANDMARKS, BIOMES, biomeIndex, posAt, gradeAt } from './course.js';
 import { totalDuration } from './workouts.js';
 import { ACHIEVEMENTS } from './achievements.js';
 
@@ -74,7 +75,9 @@ export class Hud {
     this.el = {};
     for (const id of ['h-power', 'h-pzone', 'h-zonebar', 'h-cad', 'h-hr', 'h-hrz', 'h-speed', 'h-wkg', 'h-time', 'h-dist', 'h-grade', 'h-kj',
       'h-draft', 'h-pause', 'h-board', 'h-mini', 'h-seg', 'h-seg-name', 'h-seg-bar', 'h-seg-time', 'h-score', 'h-mult', 'h-multbar',
-      'h-level', 'h-xpbar', 'h-step', 'h-next', 'h-target', 'h-twatts', 'h-remain', 'h-graph', 'h-wait', 'h-sim']) this.el[id] = $(id);
+      'h-level', 'h-xpbar', 'h-step', 'h-next', 'h-target', 'h-twatts', 'h-remain', 'h-graph', 'h-wait', 'h-sim', 'h-map', 'h-mapnote', 'h-zone']) this.el[id] = $(id);
+    this.mapZoom = false;
+    $('h-mapbox').addEventListener('click', () => { this.mapZoom = !this.mapZoom; $('h-mapbox').classList.toggle('zoomed', this.mapZoom); });
     this.el['h-zonebar'].innerHTML = POWER_ZONES.map(() => '<i></i>').join('');
     this.zoneBars = [...this.el['h-zonebar'].children];
     POWER_ZONES.forEach((z, i) => { this.zoneBars[i].style.background = z.color; });
@@ -137,6 +140,8 @@ export class Hud {
     if (game.clock - this.boardAt > 0.2) { this.boardAt = game.clock; this.#board(game); }
     this.#segment(game);
     this.#mini(game);
+    this.#map(game);
+    this.#zone(game);
     if (game.clock - this.graphAt > 0.5) {
       this.graphAt = game.clock;
       if (game.workout.steps.length) drawWorkoutProfile(e['h-graph'], game.workout, ftp, { playhead: game.wt, samples: game.samples });
@@ -192,41 +197,139 @@ export class Hud {
     setText(e['h-seg-time'], `${c.elapsed.toFixed(1)}s`);
   }
 
+  #zone(game) {
+    const phase = ((game.user.x % LOOP) + LOOP) % LOOP;
+    const bi = biomeIndex(phase);
+    let best = null;
+    for (const lm of LANDMARKS) {
+      const dist = (lm.d - phase + LOOP) % LOOP;
+      if (dist > 15 && (!best || dist < best.dist)) best = { lm, dist };
+    }
+    const found = best && game.progress.discovered[best.lm.id];
+    const dTxt = best ? (best.dist < 1000 ? `${Math.round(best.dist / 10) * 10} m` : `${(best.dist / 1000).toFixed(1)} km`) : '';
+    setText(this.el['h-zone'], `📍 ${BIOMES[bi].name} · ${Math.round(elevation(game.user.x))} m${best ? `   ·   Next: ${found ? `${best.lm.emoji} ${best.lm.name}` : '❔ unknown landmark'} in ${dTxt}` : ''}`);
+  }
+
+  /** Elevation strip: zone colours, segments, landmarks and every rider. */
   #mini(game) {
     const cv = this.el['h-mini'];
     const ctx = cv.getContext('2d');
     const { width: w, height: h } = cv;
     ctx.clearRect(0, 0, w, h);
-    const pad = 14;
+    const pad = 16;
     const X = (d) => pad + ((((d % LOOP) + LOOP) % LOOP) / LOOP) * (w - pad * 2);
     if (!this.profile) {
       this.profile = [];
-      for (let d = 0; d <= LOOP; d += 60) this.profile.push([d, elevation(d)]);
+      for (let d = 0; d <= LOOP; d += 50) this.profile.push([d, elevation(d)]);
       this.emin = Math.min(...this.profile.map((p) => p[1]));
       this.emax = Math.max(...this.profile.map((p) => p[1]));
     }
-    const Y = (el) => h - 10 - ((el - this.emin) / (this.emax - this.emin)) * (h - 26);
+    const top = 26, bottom = h - 12;
+    const Y = (el) => bottom - ((el - this.emin) / (this.emax - this.emin)) * (bottom - top);
+    for (const b of BIOMES) { // zone colour band
+      ctx.fillStyle = `rgb(${b.ground.map(Math.round)})`;
+      ctx.fillRect(X(b.start), bottom + 3, X(b.end) - X(b.start), 5);
+    }
     ctx.beginPath();
-    ctx.moveTo(X(0), h);
+    ctx.moveTo(pad, bottom + 2);
     this.profile.forEach(([d, el]) => ctx.lineTo(pad + (d / LOOP) * (w - pad * 2), Y(el)));
-    ctx.lineTo(w - pad, h);
-    ctx.fillStyle = 'rgba(255,255,255,.12)';
+    ctx.lineTo(w - pad, bottom + 2);
+    const g = ctx.createLinearGradient(0, top, 0, bottom);
+    g.addColorStop(0, 'rgba(255,255,255,.3)');
+    g.addColorStop(1, 'rgba(255,255,255,.06)');
+    ctx.fillStyle = g;
     ctx.fill();
     for (const s of SEGMENTS) {
-      ctx.strokeStyle = s.color; ctx.lineWidth = 4;
+      ctx.strokeStyle = s.color; ctx.lineWidth = 4; ctx.lineCap = 'round';
       ctx.beginPath();
-      for (let d = s.start; d <= s.end; d += 60) {
-        const x = X(d), y = Y(elevation(d));
-        d === s.start ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      }
+      for (let d = s.start; d <= s.end; d += 50) { const x = X(d), y = Y(elevation(d)); d === s.start ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
       ctx.stroke();
     }
-    const dots = game.board().slice().reverse();
-    for (const { r } of dots) {
+    ctx.font = '14px system-ui, "Apple Color Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    for (const lm of LANDMARKS) {
+      const x = X(lm.d), y = Y(elevation(lm.d));
+      if (game.progress.discovered[lm.id]) ctx.fillText(lm.emoji, x, Math.max(14, y - 6));
+      else { ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.fillText('?', x, Math.max(14, y - 6)); }
+    }
+    ctx.textAlign = 'start';
+    for (const { r } of game.board().slice().reverse()) {
       ctx.fillStyle = r.isCoach ? '#ffd400' : r.color;
-      ctx.beginPath(); ctx.arc(X(r.x), Y(elevation(r.x)) - 3, r.isUser ? 6 : 4, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(X(r.x), Y(elevation(r.x)), r.isUser ? 5.5 : 3.5, 0, 7); ctx.fill();
       if (r.isUser) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
     }
+  }
+
+  /** Top-down map of the loop, coloured by gradient. Click to zoom and follow the rider. */
+  #map(game) {
+    const cv = this.el['h-map'];
+    const ctx = cv.getContext('2d');
+    const { width: w, height: h } = cv;
+    ctx.clearRect(0, 0, w, h);
+    const pad = 34;
+    const fit = Math.min((w - pad * 2) / (MAP.maxX - MAP.minX), (h - pad * 2) / (MAP.maxY - MAP.minY));
+    const me = posAt(game.user.x);
+    const s = this.mapZoom ? fit * 3.4 : fit;
+    const cx = this.mapZoom ? me.x : (MAP.minX + MAP.maxX) / 2;
+    const cy = this.mapZoom ? me.y : (MAP.minY + MAP.maxY) / 2;
+    const P = (x, y) => [w / 2 + (x - cx) * s, h / 2 - (y - cy) * s];
+    ctx.save();
+    ctx.beginPath(); ctx.roundRect(0, 0, w, h, 24); ctx.clip();
+    ctx.fillStyle = 'rgba(30,60,50,.35)'; ctx.fillRect(0, 0, w, h);
+
+    // lake
+    const lake = posAt(7600);
+    const [lx, ly] = P(lake.x - 230, lake.y);
+    ctx.fillStyle = 'rgba(70,150,220,.5)';
+    ctx.beginPath(); ctx.ellipse(lx, ly, 150 * s * 0.85, 95 * s * 0.85, 0.4, 0, 7); ctx.fill();
+
+    const colour = (g) => (g < -0.025 ? '#6fb8ff' : g < 0.02 ? '#8fdc8a' : g < 0.045 ? '#f5d04a' : g < 0.07 ? '#ff9f2e' : '#ff4d4d');
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const trace = (from, to) => {
+      ctx.beginPath();
+      let first = true;
+      for (const p of MAP.pts) {
+        if (p.d < from || p.d > to) continue;
+        const [x, y] = P(p.x, p.y);
+        first ? ctx.moveTo(x, y) : ctx.lineTo(x, y); first = false;
+      }
+    };
+    trace(0, 10000); ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 9; ctx.stroke();
+    for (const sg of SEGMENTS) { trace(sg.start, sg.end); ctx.strokeStyle = sg.color; ctx.lineWidth = 9; ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1; }
+    for (let i = 1; i < MAP.pts.length; i++) {
+      const a = MAP.pts[i - 1], b = MAP.pts[i];
+      const [x0, y0] = P(a.x, a.y), [x1, y1] = P(b.x, b.y);
+      ctx.strokeStyle = colour(gradeAt(b.d % LOOP)); ctx.lineWidth = 4.5;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    }
+
+    ctx.font = `${this.mapZoom ? 24 : 20}px system-ui, "Apple Color Emoji", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const lm of LANDMARKS) {
+      const q = posAt(lm.d);
+      const [x, y] = P(q.x, q.y);
+      if (game.progress.discovered[lm.id]) ctx.fillText(lm.emoji, x, y - 12);
+      else { ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillText('?', x, y - 11); }
+    }
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+
+    for (const { r } of game.board().slice().reverse()) {
+      if (r.isUser) continue;
+      const q = posAt(r.x);
+      const [x, y] = P(q.x, q.y);
+      ctx.fillStyle = r.isCoach ? '#ffd400' : r.color;
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
+    }
+    const [ux, uy] = P(me.x, me.y);
+    const pulse = (game.clock * 1.2) % 1;
+    ctx.strokeStyle = `rgba(255,59,107,${1 - pulse})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(ux, uy, 9 + pulse * 18, 0, 7); ctx.stroke();
+    ctx.fillStyle = '#ff3b6b'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(ux, uy, 9, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.font = '700 18px system-ui, sans-serif';
+    ctx.fillText('N ↑', 16, 28);
+    ctx.restore();
+    setText(this.el['h-mapnote'], this.mapZoom ? 'Following · click to zoom out' : `${Object.keys(game.progress.discovered).length}/${LANDMARKS.length} landmarks · click to zoom`);
   }
 }
 
@@ -297,6 +400,9 @@ export function showSummary(game, levelBefore, xpBefore) {
   $('s-ach').innerHTML = sum.unlocked.map((id) => {
     const a = ACHIEVEMENTS.find((x) => x.id === id);
     return `<span class="badge">🏅 ${a.name}</span>`;
+  }).join('') + sum.discovered.map((id) => {
+    const lm = LANDMARKS.find((x) => x.id === id);
+    return `<span class="badge">${lm.emoji} ${lm.name}</span>`;
   }).join('');
 
   const xp = xpBefore + sum.score;

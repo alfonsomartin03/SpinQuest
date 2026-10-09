@@ -5,6 +5,7 @@ import { parseIndoorBikeData, parseCyclingPower, parseHeartRate } from '../js/bl
 import { speedFromPower, gradeAt, elevation, LOOP, SEGMENTS, powerZone, levelFor, xpForLevel } from '../js/physics.js';
 import { WORKOUTS, workoutAt, totalDuration } from '../js/workouts.js';
 import { Game } from '../js/game.js';
+import { posAt, headingAt, LANDMARKS, envAt } from '../js/course.js';
 
 const view = (bytes) => new DataView(new Uint8Array(bytes).buffer);
 
@@ -60,9 +61,18 @@ test('physics: sensible speeds', () => {
 
 test('course loops seamlessly and has sane gradients', () => {
   assert.ok(Math.abs(elevation(0) - elevation(LOOP)) < 1e-9);
-  for (let d = 0; d < LOOP; d += 25) assert.ok(Math.abs(gradeAt(d)) < 0.1);
-  assert.equal(SEGMENTS.length, 3);
+  for (let d = 0; d < LOOP; d += 25) assert.ok(Math.abs(gradeAt(d)) < 0.105, `grade ${gradeAt(d)} at ${d}`);
+  assert.equal(SEGMENTS.length, 4);
   for (const s of SEGMENTS) assert.ok(s.start >= 0 && s.end <= LOOP);
+});
+
+test('course geometry closes on itself and has landmarks in zones', () => {
+  const a = posAt(0), b = posAt(LOOP - 5);
+  assert.ok(Math.hypot(a.x - b.x, a.y - b.y) < 8);
+  assert.ok(Math.abs(headingAt(LOOP) - headingAt(0)) > 6); // one full turn per lap
+  for (const lm of LANDMARKS) assert.ok(lm.d >= 0 && lm.d < LOOP);
+  assert.ok(envAt(7500).water > 0.9 && envAt(1000).water === 0);
+  assert.ok(envAt(4600).snow > 0.5 && envAt(500).snow === 0);
 });
 
 test('zones and levels', () => {
