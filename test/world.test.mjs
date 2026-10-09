@@ -16,7 +16,7 @@ export async function resolve(s, c, n) {
 }`));
 
 const geo = await import('../js/world/geo.js');
-const { TerrainField, LAKE, RIVER } = await import('../js/world/terrain.js');
+const { TerrainField, LAKE, RIVER, lakeR } = await import('../js/world/terrain.js');
 const { massHeight, MASS_H } = await import('../js/world/structures.js');
 const course = await import('../js/course.js');
 
@@ -55,9 +55,14 @@ test('the tunnel hill is a built mesh and the terrain never covers the road, eve
   assert.ok(field.height(b.x, b.z) < b.y - 4, 'stream bed under the deck');
 });
 
-test('the lake is lower than the nearby road and the stream runs downhill into it', () => {
-  const f = geo.frame(7650);
-  assert.ok(LAKE.level < f.y, 'lake below the road');
+test('the lake never touches or floods the road, and the stream runs downhill into it', () => {
+  let nearest = Infinity;
+  for (let d = 0; d < course.LOOP; d += 4) {
+    const f = geo.frame(d);
+    for (const lat of [-6, 0, 6]) nearest = Math.min(nearest, lakeR(f.x + f.rx * lat, f.z + f.rz * lat));
+    if (lakeR(f.x, f.z) < 1.6) assert.ok(f.y > LAKE.level + 0.5, `road at d=${d} is not above the water`);
+  }
+  assert.ok(nearest > 1.12, `the road comes within ${nearest.toFixed(2)} of the shoreline radius`);
   const lakeMid = field.height(LAKE.cx, LAKE.cz);
   assert.ok(lakeMid < LAKE.level - 1, `lake bed ${lakeMid} vs level ${LAKE.level}`);
   const { level, bridgeIdx } = RIVER;

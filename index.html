@@ -107,6 +107,7 @@
 
 <!-- ============ HUD ============ -->
 <div id="hud" hidden>
+  <div class="left-col">
   <section class="panel stats">
     <div class="power-row">
       <div class="big"><span id="h-power">0</span><small>W</small></div>
@@ -129,18 +130,39 @@
     </div>
     <div class="tags"><span id="h-draft" class="tag" hidden>Drafting</span><span id="h-pause" class="tag warn" hidden>Paused</span></div>
   </section>
+  <section class="panel climb" id="h-climb" hidden>
+    <div class="climb-head"><span class="climb-tag">CLIMB</span><b id="c-name"></b></div>
+    <div class="climb-sub" id="c-sub"></div>
+    <canvas id="c-profile" width="600" height="120"></canvas>
+    <div class="climb-grid">
+      <div><small>Dist. left</small><b id="c-left">--</b></div>
+      <div><small>Climb left</small><b id="c-elev">--</b></div>
+      <div><small>Avg left</small><b id="c-avg">--</b></div>
+      <div><small>Now</small><b id="c-now">--</b></div>
+      <div><small>Next 500m</small><b id="c-next">--</b></div>
+      <div><small>VAM m/h</small><b id="c-vam">--</b></div>
+      <div><small>ETA top</small><b id="c-eta">--</b></div>
+      <div><small>Summit</small><b id="c-top">--</b></div>
+    </div>
+    <div class="climb-foot" id="c-steep"></div>
+  </section>
+  </div>
 
   <div class="right-col">
-    <section class="panel board" id="h-board"></section>
-    <section class="panel map" id="h-mapbox" title="Click to zoom the map">
-      <canvas id="h-map" width="440" height="400"></canvas>
-      <div class="map-note" id="h-mapnote"></div>
+    <section class="panel board">
+      <div class="panel-head"><span>Riders</span><small id="h-board-count"></small></div>
+      <div id="h-board" class="board-rows"></div>
+    </section>
+    <section class="panel map" id="h-mapbox" title="Click to zoom and follow">
+      <div class="panel-head"><span>Course map</span><small id="h-mapnote"></small></div>
+      <canvas id="h-map" width="520" height="380"></canvas>
     </section>
   </div>
+  <section class="panel rcard" id="h-rcard" hidden></section>
 
   <div class="top-center">
     <div class="zone-line" id="h-zone"></div>
-    <canvas id="h-mini" width="640" height="72"></canvas>
+    <canvas id="h-mini" width="720" height="84"></canvas>
     <div class="seg-banner" id="h-seg" hidden><b id="h-seg-name"></b><div class="bar"><i id="h-seg-bar"></i></div><span id="h-seg-time"></span></div>
   </div>
 

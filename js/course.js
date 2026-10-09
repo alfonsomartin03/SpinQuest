@@ -192,18 +192,75 @@ export const LANDMARKS = [
   { id: 'summit', name: 'Summit 1,374 m', d: 4600, lat: 0, kind: 'summit', emoji: '🏔️' },
   { id: 'castle', name: 'Hilltop Castle', d: 5900, lat: 95, kind: 'castle', emoji: '🏰' },
   { id: 'bridge', name: 'Covered Bridge', d: 7020, lat: 0, kind: 'bridge', emoji: '🌉' },
-  { id: 'lighthouse', name: 'Lighthouse', d: 7700, lat: -52, kind: 'lighthouse', emoji: '🗼' },
+  { id: 'lighthouse', name: 'Lighthouse', d: 8148, lat: -70, kind: 'lighthouse', emoji: '🗼' },
   { id: 'market', name: 'Market Square', d: 8620, lat: 9, kind: 'market', emoji: '🎪' },
   { id: 'church', name: 'Village Church', d: 8850, lat: -19, kind: 'church', emoji: '⛪' },
   { id: 'windmill2', name: 'Harvest Mill', d: 9750, lat: 20, kind: 'windmill', emoji: '🌾' },
 ];
+
+// ---- Lake (shared by the 3D world and the map) -------------------------------------------------------
+
+/** An ellipse on the left of the road, centred `offset` m from the road at distance `d`. */
+export const LAKE_SHAPE = { d: 8150, offset: 340, ra: 460, rb: 270 }; // sized and placed so the road never touches the water
+
+// ---- Climbs ---------------------------------------------------------------------------------------------
+
+export const CLIMBS = [
+  { id: 'col', name: 'Col de SpinQuest', start: 1500, end: 4600 },
+];
+
+const clampN = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+
+/**
+ * Where a rider stands on a climb at distance d: what's left, how steep it is now and what's coming.
+ * Elevations and grades are real (not the exaggerated 3D ones).
+ */
+export function climbStats(climb, d) {
+  const p = wrap(d);
+  const len = climb.end - climb.start;
+  const pos = clampN(p, climb.start, climb.end);
+  const into = pos - climb.start;
+  const left = len - into;
+  const alt0 = elevation(climb.start), alt1 = elevation(climb.end), altNow = elevation(pos);
+  const elevLeft = Math.max(0, alt1 - altNow);
+  const avgAhead = (m) => { const to = Math.min(climb.end, pos + m); return to - pos > 1 ? (elevation(to) - altNow) / (to - pos) : 0; };
+  let steepest = { grade: -1, dist: 0 };
+  for (let m = 0; m <= Math.min(1000, left); m += 25) {
+    const g = gradeAt(pos + m);
+    if (g > steepest.grade) steepest = { grade: g, dist: m };
+  }
+  return {
+    state: p < climb.start ? 'before' : p > climb.end ? 'done' : 'on',
+    toStart: Math.max(0, climb.start - p),
+    len, into, left,
+    progress: into / len,
+    elevTotal: alt1 - alt0, elevLeft,
+    avgAll: (alt1 - alt0) / len,
+    avgLeft: left > 1 ? elevLeft / left : 0,
+    gradeNow: gradeAt(pos),
+    next500: avgAhead(500),
+    next1k: avgAhead(1000),
+    steepest,
+    summitAlt: alt1,
+    altNow,
+  };
+}
+
+/** The climb the rider is on, or about to start (within `lead` metres), with its stats. */
+export function activeClimb(d, lead = 450) {
+  const p = wrap(d);
+  for (const climb of CLIMBS) {
+    if (p >= climb.start - lead && p <= climb.end) return { climb, stats: climbStats(climb, p) };
+  }
+  return null;
+}
 
 // ---- Timed segments ---------------------------------------------------------------------------
 
 export const SEGMENTS = [
   { id: 'kom', name: 'Col Climb', kind: 'climb', start: 2300, end: 4600, color: '#ff4d4d' },
   { id: 'descent', name: 'Switchback Run', kind: 'sprint', start: 4950, end: 5750, color: '#c25cff' },
-  { id: 'lake', name: 'Lakeside Sprint', kind: 'sprint', start: 7650, end: 8000, color: '#3ecf6e' },
+  { id: 'lake', name: 'Lakeside Sprint', kind: 'sprint', start: 7900, end: 8300, color: '#3ecf6e' },
   { id: 'village', name: 'Village Crit', kind: 'sprint', start: 8500, end: 8950, color: '#ff9f2e' },
 ];
 

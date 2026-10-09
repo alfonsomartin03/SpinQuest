@@ -9,6 +9,7 @@ import {
   DataHub, connectTrainer, connectHeartRate, bluetoothSupported, bluetoothProblem, explainError, getKnownDevices,
 } from './ble.js';
 import { VirtualGears, slew } from './gearing.js';
+import { LoopbackSession, DemoPeers } from './net.js';
 import { initAudio, sfx, setMuted, isMuted } from './audio.js';
 import { ACHIEVEMENTS } from './achievements.js';
 import { LANDMARKS } from './course.js';
@@ -48,6 +49,18 @@ let attract = null;
 let attractSim = null;
 let endTimer = null;
 let last = performance.now();
+
+// optional demo of the multiplayer path: ?demo=remote adds three simulated live riders over a laggy fake network
+const demoRemote = new URLSearchParams(location.search).get('demo') === 'remote';
+let net = null;
+function startNet() {
+  stopNet();
+  if (!demoRemote) return;
+  const session = new LoopbackSession({ latencyMs: 90, jitterMs: 50 });
+  const peers = new DemoPeers(session, { count: 3, startX: game.user.x });
+  net = { session, peers, off: session.onState((st) => game.applyRemote(st)) };
+}
+function stopNet() { net?.off(); net = null; }
 
 // trainer control during a ride
 let gears = null;
@@ -293,6 +306,7 @@ function startRide() {
   sendTimer = 0;
   if (ctlActive) links.trainer.control.acquire();
   $('h-gear').hidden = true;
+  startNet();
 
   mode = 'ride';
   $('menu').hidden = true;
@@ -309,6 +323,7 @@ function endRide() {
   endTimer = null;
   links.trainer?.control?.release(); // hand resistance back to the rider
   ctlActive = false;
+  stopNet();
   const sum = game.summary();
   progress.xp += sum.score;
   progress.rides += 1;
@@ -370,6 +385,7 @@ function frame(now) {
   last = now;
 
   if (mode === 'ride') {
+    net?.peers.tick(dt);
     game.update(dt, readInputs(dt));
     driveTrainer(dt);
     const events = game.drain();

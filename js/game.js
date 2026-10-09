@@ -6,6 +6,7 @@ import {
 } from './physics.js';
 import { LANDMARKS, BIOMES, biomeIndex } from './course.js';
 import { workoutAt, totalDuration } from './workouts.js';
+import { RemoteRider, sanitizeState } from './net.js';
 import { ACHIEVEMENTS } from './achievements.js';
 
 const BOTS = [
@@ -36,10 +37,17 @@ export function orbAt(i) {
   return { i, x: i * ORB_SPACING + 4.5, lat: 0.9 * Math.sin(group * 1.9 + k * 0.45), h: 0.9 + Math.sin((k / (ORB_GROUP - 1)) * Math.PI) * 1.3, gold: hash(group * 3.3) > 0.88 };
 }
 
+let riderSeq = 1;
+/**
+ * Every rider (you, bots, the coach, and later remote players) has the same shape, so the sidebar, the
+ * 3D scene and the network code treat them alike. kind: 'you' | 'bot' | 'coach' | 'remote'.
+ */
 const mkRider = (name, color, x, extra = {}) => ({
-  lat: 0, name, color, x, v: 0, power: 0, cad: 85, crank: Math.random() * 6, wheel: 0,
-  drag: 1, drafting: false, segStart: {}, segTimes: {}, ...extra,
+  id: `r${riderSeq++}`, kind: 'bot', lat: 0, name, color, x, v: 0, power: 0, p3: 0, hr: null, cad: 85, weight: 75, ftp: 200,
+  crank: Math.random() * 6, wheel: 0, drag: 1, drafting: false, segStart: {}, segTimes: {}, ...extra,
 });
+
+const BOT_WEIGHTS = [58, 70, 62, 79, 68, 84];
 
 export class Game {
   /**
@@ -60,12 +68,14 @@ export class Game {
     this.idle = 0;
     this.finished = false;
 
-    this.user = mkRider(profile.name || 'You', '#ff3b6b', START, { isUser: true });
+    this.user = mkRider(profile.name || 'You', '#ff3b6b', START, { isUser: true, kind: 'you', id: 'you', weight: profile.weight, ftp: profile.ftp });
     this.bots = BOTS.map((b, i) => mkRider(b.name, b.color, START + b.off, {
-      lat: b.lat, f: b.f, i, ph: Math.random() * 6.28, mass: 78, nextAttack: 40 + Math.random() * 60, attackUntil: 0,
+      lat: b.lat, f: b.f, i, ph: Math.random() * 6.28, weight: BOT_WEIGHTS[i % BOT_WEIGHTS.length], mass: BOT_WEIGHTS[i % BOT_WEIGHTS.length] + 9,
+      ftp: Math.round(profile.ftp * (b.f + 0.12)), hr: 88, nextAttack: 40 + Math.random() * 60, attackUntil: 0,
     }));
+    this.remotes = new Map(); // id -> { rider, net }
     this.coach = workout.steps.length
-      ? mkRider('Coach', '#ffd400', START + 4, { isCoach: true, mass: this.mass, lat: -0.6 })
+      ? mkRider('Coach', '#ffd400', START + 4, { isCoach: true, kind: 'coach', id: 'coach', weight: profile.weight, ftp: profile.ftp, mass: this.mass, lat: -0.6 })
       : null;
 
     // live values
@@ -121,6 +131,8 @@ export class Game {
     this.hr = inp.hr ?? null;
     this.p3 += (pw - this.p3) * (1 - Math.exp(-dt / 3));
     this.pSmooth += (pw - this.pSmooth) * (1 - Math.exp(-dt / 0.8));
+    this.user.p3 = this.p3; // the same fields every rider shares, for the sidebar and the network
+    this.user.hr = this.hr;
 
     // Pedalling means real power or cadence (a spinning flywheel's last few rpm don't count).
     if (pw > 3 || this.cad > 8) {
@@ -132,6 +144,7 @@ export class Game {
     const active = !this.paused && !this.finished;
 
     this.#physics(dt);
+    this.#updateRemotes(dt);
     if (!this.paused) this.#updateBots(dt);
     this.#orbs();
     this.#segments();
@@ -153,7 +166,7 @@ export class Game {
   // ---- physics ----------------------------------------------------------------
 
   #physics(dt) {
-    const riders = [this.user, ...this.bots];
+    const riders = [this.user, ...this.bots, ...this.#remoteRiders()];
     const sorted = riders.slice().sort((a, b) => a.x - b.x);
     sorted.forEach((r, i) => {
       r.drag = 1;
@@ -183,6 +196,7 @@ export class Game {
       c.x = clamp(c.x, u.x - 60, u.x + 60);
       c.cad = 88;
       c.crank += (88 / 60) * Math.PI * 2 * dt;
+      c.p3 += (c.power - c.p3) * (1 - Math.exp(-dt / 3));
     }
   }
 
@@ -214,6 +228,50 @@ export class Game {
       this.#advance(b, p, b.mass, dt);
       b.cad = clamp(80 + 25 * (p / ftp - 0.7), 65, 105);
       b.crank += (b.cad / 60) * Math.PI * 2 * dt;
+      b.p3 += (b.power - b.p3) * (1 - Math.exp(-dt / 3));
+      const hrTarget = 66 + (176 - 66) * Math.min(1, (b.power / (b.ftp * 1.05)) ** 0.9); // a plausible heart rate for their effort
+      b.hr += (hrTarget - b.hr) * (1 - Math.exp(-dt / 20));
+    }
+  }
+
+  // ---- remote riders (multiplayer groundwork; see net.js) ----------------------------------------
+
+  #remoteRiders() { return [...this.remotes.values()].map((e) => e.rider); }
+
+  /** Everyone on the road: you, the bunch, the coach and any remote riders. */
+  allRiders() {
+    return [this.user, ...this.bots, ...(this.coach ? [this.coach] : []), ...this.#remoteRiders()];
+  }
+
+  /** Feed a state received from the network. Unknown riders join automatically; bad states are ignored. */
+  applyRemote(raw) {
+    const s = sanitizeState(raw);
+    if (!s) return false;
+    let e = this.remotes.get(s.id);
+    if (!e) {
+      const rider = mkRider(s.name, s.color, s.x, { id: s.id, kind: 'remote', weight: s.weight, ftp: s.ftp, lat: s.lat });
+      e = { rider, net: new RemoteRider(s) };
+      this.remotes.set(s.id, e);
+      this.#toast(s.name, 'joined the ride', 'info');
+    }
+    e.net.push(s, this.clock * 1000);
+    return true;
+  }
+
+  removeRemote(id) {
+    const e = this.remotes.get(id);
+    if (e) { this.remotes.delete(id); this.#toast(e.rider.name, 'left the ride', 'info'); }
+  }
+
+  #updateRemotes(dt) {
+    for (const { rider: r, net } of this.remotes.values()) {
+      const st = net.sample(this.clock * 1000);
+      if (!st) continue;
+      r.x = st.x; r.lat = st.lat; r.v = st.speed; r.power = st.power; r.cad = st.cad; r.hr = st.hr;
+      r.weight = st.weight; r.ftp = st.ftp; r.name = st.name; r.color = st.color;
+      r.p3 += (st.power - r.p3) * (1 - Math.exp(-dt / 3));
+      r.crank += (r.cad / 60) * Math.PI * 2 * dt;
+      r.wheel += (r.v / 0.36) * dt;
     }
   }
 
@@ -235,7 +293,7 @@ export class Game {
   }
 
   #segments() {
-    const riders = [this.user, ...this.bots];
+    const riders = [this.user, ...this.bots, ...this.#remoteRiders()];
     for (const r of riders) {
       const phase = ((r.x % LOOP) + LOOP) % LOOP;
       for (const s of SEGMENTS) {
@@ -403,11 +461,17 @@ export class Game {
   // ---- views for the HUD ------------------------------------------------------
 
   /** All riders ordered front to back with their gap to the user (metres, + = ahead). */
+  /**
+   * Everyone ordered front to back. `gap` is metres ahead (+) or behind (-) of you; `gapSec` estimates the
+   * time to close it at the chaser's speed.
+   */
   board() {
-    const rows = [this.user, ...this.bots];
-    if (this.coach) rows.push(this.coach);
-    return rows
-      .map((r) => ({ r, gap: r.x - this.user.x }))
+    return this.allRiders()
+      .map((r) => {
+        const gap = r.x - this.user.x;
+        const chaser = gap > 0 ? this.user.v : r.v;
+        return { r, gap, gapSec: gap / Math.max(3, chaser) };
+      })
       .sort((a, b) => b.r.x - a.r.x);
   }
 

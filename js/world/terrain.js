@@ -3,7 +3,7 @@
 // zone, slope and altitude, so there are no texture assets to ship.
 
 import * as THREE from 'three';
-import { LOOP, BIOMES, BRIDGE } from '../course.js';
+import { LOOP, BIOMES, BRIDGE, LAKE_SHAPE } from '../course.js';
 import { frame, place, elevEx, BOUNDS } from './geo.js';
 import { makeNoise, smoothstep as sm, lerp } from './noise.js';
 
@@ -48,12 +48,19 @@ function zoneAt(s) {
 
 // ---- features ---------------------------------------------------------------------------------
 
-const LAKE_RA = 560;
-const LAKE_RB = 270;
-const lakeFrame = frame(7650);
+const LAKE_RA = LAKE_SHAPE.ra;
+const LAKE_RB = LAKE_SHAPE.rb;
+const lakeFrame = frame(LAKE_SHAPE.d);
+/** Water sits just below the lowest road beside the lake, so the road is never under water. */
+function lakeLevel() {
+  let low = Infinity;
+  for (let d = LAKE_SHAPE.d - LAKE_SHAPE.ra * 1.15; d <= LAKE_SHAPE.d + LAKE_SHAPE.ra * 1.15; d += 5) low = Math.min(low, elevEx(d));
+  return low - 1.4;
+}
+
 export const LAKE = (() => {
-  const c = place(7650, -(LAKE_RB + 62));
-  return { cx: c.x, cz: c.z, tx: lakeFrame.tx, tz: lakeFrame.tz, ra: LAKE_RA, rb: LAKE_RB, level: elevEx(7650) - 1.9 };
+  const c = place(LAKE_SHAPE.d, -LAKE_SHAPE.offset);
+  return { cx: c.x, cz: c.z, tx: lakeFrame.tx, tz: lakeFrame.tz, ra: LAKE_RA, rb: LAKE_RB, level: lakeLevel() };
 })();
 
 /** Normalised radius inside the lake ellipse (1 = shoreline). */

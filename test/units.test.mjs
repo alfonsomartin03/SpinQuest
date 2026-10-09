@@ -6,7 +6,8 @@ import { VirtualGears, slew, GEAR_RATIOS } from '../js/gearing.js';
 import { speedFromPower, powerFromSpeed, gradeAt, elevation, LOOP, SEGMENTS, powerZone, levelFor, xpForLevel } from '../js/physics.js';
 import { WORKOUTS, workoutAt, totalDuration } from '../js/workouts.js';
 import { Game } from '../js/game.js';
-import { posAt, headingAt, LANDMARKS, envAt } from '../js/course.js';
+import { posAt, headingAt, LANDMARKS, envAt, CLIMBS, climbStats, activeClimb, elevation as realElev } from '../js/course.js';
+import { PROTOCOL_VERSION, sanitizeState, RemoteRider, LoopbackSession, DemoPeers, packRider } from '../js/net.js';
 
 const view = (bytes) => new DataView(new Uint8Array(bytes).buffer);
 
@@ -272,4 +273,108 @@ test('slew limits rises but not drops', () => {
   assert.equal(slew(null, 500, 1), 500);
   assert.equal(slew(100, 900, 1, 300), 400);
   assert.equal(slew(400, 50, 1), 50);
+});
+
+test('climb statistics: distance, elevation and grade left', () => {
+  const c = CLIMBS[0];
+  const len = c.end - c.start;
+  const start = climbStats(c, c.start + 1);
+  assert.equal(start.state, 'on');
+  assert.ok(Math.abs(start.left - (len - 1)) < 1e-6);
+  assert.ok(start.elevLeft > 150 && Math.abs(start.avgLeft - start.avgAll) < 0.003, `elevLeft ${start.elevLeft}`);
+  const mid = climbStats(c, c.start + len / 2);
+  assert.ok(Math.abs(mid.left - len / 2) < 1e-6);
+  assert.ok(mid.elevLeft < start.elevLeft && mid.elevLeft > 0);
+  assert.ok(Math.abs(mid.progress - 0.5) < 1e-6);
+  assert.ok(mid.steepest.grade >= mid.gradeNow - 1e-9, 'steepest ahead is at least the current grade');
+  const top = climbStats(c, c.end);
+  assert.ok(top.left < 1e-6 && top.elevLeft < 0.01);
+  assert.ok(Math.abs(top.summitAlt - realElev(c.end)) < 1e-9);
+  const before = climbStats(c, c.start - 300);
+  assert.equal(before.state, 'before');
+  assert.ok(Math.abs(before.toStart - 300) < 1e-6);
+  assert.equal(climbStats(c, c.end + 50).state, 'done');
+});
+
+test('the climb panel appears 450 m before the climb and leaves at the top', () => {
+  const c = CLIMBS[0];
+  assert.equal(activeClimb(c.start - 500), null);
+  assert.equal(activeClimb(c.start - 400).stats.state, 'before');
+  assert.equal(activeClimb(c.start + 1000).climb.id, c.id);
+  assert.equal(activeClimb(c.end + 10), null);
+  assert.ok(activeClimb(c.start + 1000 + 10000).climb, 'works on later laps');
+});
+
+const rstate = (over = {}) => ({ v: PROTOCOL_VERSION, id: 'p1', name: 'Sam', color: '#4cc9f0', t: 1000, x: 100, lat: 0, speed: 10, power: 250, cad: 90, hr: 150, weight: 70, ftp: 250, ...over });
+
+test('network states are validated and clamped', () => {
+  assert.ok(sanitizeState(rstate()));
+  assert.equal(sanitizeState(null), null);
+  assert.equal(sanitizeState(rstate({ v: 99 })), null);
+  assert.equal(sanitizeState(rstate({ x: NaN })), null);
+  assert.equal(sanitizeState(rstate({ speed: 400 })), null);
+  assert.equal(sanitizeState(rstate({ id: '' })), null);
+  const s = sanitizeState(rstate({ power: 99999, weight: 5, color: 'red', name: 'x'.repeat(50), hr: 999, lat: 50 }));
+  assert.equal(s.power, 2500); assert.equal(s.weight, 30); assert.equal(s.color, '#cccccc'); assert.equal(s.name.length, 16); assert.equal(s.hr, 230); assert.equal(s.lat, 4);
+});
+
+test('remote riders are interpolated smoothly despite jitter, and extrapolation is brief', () => {
+  const r = new RemoteRider();
+  // a rider at a steady 10 m/s sends 10 states a second; packets arrive 100 +- 40 ms late
+  let seed = 3; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const arrivals = [];
+  for (let i = 0; i < 40; i++) { const t = 1000 + i * 100; arrivals.push({ s: rstate({ t, x: 100 + i }), at: t + 100 + (rnd() - 0.5) * 80 }); }
+  arrivals.sort((a, b) => a.at - b.at);
+  let worst = 0;
+  for (const a of arrivals) {
+    r.push(a.s, a.at);
+    const st = r.sample(a.at + 50);
+    if (st && r.buf.length > 4) { // true x at the sample's own timestamp
+      const trueX = 100 + (a.at + 50 - r.offset - 150 - 1000) / 100;
+      worst = Math.max(worst, Math.abs(st.x - trueX));
+    }
+  }
+  assert.ok(worst < 0.8, `interpolation error ${worst} m`);
+  const last = arrivals.at(-1).at;
+  const starved = r.sample(last + 3000);
+  assert.ok(starved.extrapolated);
+  const held = r.sample(last + 10000);
+  assert.ok(held.x - starved.x < 4.5, 'extrapolation stops after 0.3 s'); // 10 m/s * 0.3 s = 3 m
+  assert.equal(r.push(rstate({ t: 1000 }), last), false, 'old packets are ignored');
+});
+
+test('game: remote riders join, show up in the sidebar data, and leave', () => {
+  const progress = { xp: 0, ach: {}, segPR: {}, discovered: {} };
+  const g = new Game({ profile: { name: 'T', weight: 70, ftp: 250, maxHr: 190 }, workout: WORKOUTS[0], progress });
+  for (let i = 0; i < 60; i++) g.update(0.05, { power: 180, cadence: 88, hr: 140 });
+  assert.equal(g.applyRemote(rstate({ x: g.user.x + 40, t: 0 })), true);
+  assert.equal(g.applyRemote({ nonsense: true }), false);
+  for (let k = 1; k < 40; k++) { // 4 s of 10 Hz packets
+    g.applyRemote(rstate({ t: k * 100, x: g.user.x + 40 + k, speed: 10, power: 320, hr: 168 }));
+    for (let i = 0; i < 2; i++) g.update(0.05, { power: 180, cadence: 88, hr: 140 });
+  }
+  const row = g.board().find((e) => e.r.kind === 'remote');
+  assert.ok(row, 'remote rider is on the board');
+  assert.equal(row.r.id, 'p1');
+  assert.ok(row.gap > 20 && row.gapSec > 0, `gap ${row.gap}`);
+  assert.ok(row.r.p3 > 100 && row.r.weight === 70 && row.r.hr > 100);
+  assert.ok(g.allRiders().includes(row.r));
+  g.removeRemote('p1');
+  assert.ok(!g.board().some((e) => e.r.kind === 'remote'));
+  // every rider has the fields the sidebar shows
+  for (const { r } of g.board()) for (const k of ['id', 'name', 'color', 'x', 'v', 'p3', 'weight', 'ftp', 'kind']) assert.ok(r[k] !== undefined, `${r.name}.${k}`);
+});
+
+test('demo peers publish through the loopback with latency and packRider round-trips', async () => {
+  let now = 0;
+  const queue = [];
+  const session = new LoopbackSession({ latencyMs: 80, jitterMs: 0, now: () => now, schedule: (fn, ms) => queue.push({ at: now + ms, fn }) });
+  const got = [];
+  session.onState((s) => got.push(s));
+  const peers = new DemoPeers(session, { count: 2, startX: 0, now: () => now });
+  for (let i = 0; i < 30; i++) { now += 50; peers.tick(0.05); for (const q of queue.filter((q) => q.at <= now)) q.fn(); }
+  assert.ok(got.length >= 8, `${got.length} states received`);
+  assert.ok(got.every((s) => sanitizeState(s)), 'all demo states are valid on the wire');
+  const rider = { id: 'a', name: 'A', color: '#112233', x: 5, lat: 1, v: 9, cad: 80, weight: 70, ftp: 250 };
+  assert.deepEqual(sanitizeState(packRider(rider, { power: 200, hr: 140, now: 1 })).id, 'a');
 });

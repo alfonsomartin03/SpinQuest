@@ -21,6 +21,9 @@ Your trainer must allow a second Bluetooth connection (most modern FTMS trainers
 - **12 landmarks to discover.** Ride past each one for the first time to earn +100 points. The minimap and elevation strip show them as `?` until you find them. Click the minimap to zoom in and follow your rider.
 - **A real 3D world (Three.js).** A chase camera follows your rider through a procedurally generated landscape: terrain that hugs the road and rises into snow-capped mountains, a lake with sailboats and reeds, a stream under a covered wooden bridge, a lit rock tunnel, pine forests, orchards, a village and golden wheat fields. Time of day follows the course, from bright morning on the climb to golden hour at the lake. Every model and texture is generated in code, so there are no art files to load or license.
 - **Characters with personality.** Every rider is a rigged, stylised cyclist with smooth tapered limbs, a patterned jersey with a race number on the back, bib shorts, socks and shoes, an aero helmet, sunglasses and their own skin tone and hair (some have bobbing ponytails). The bikes have aero tubes, deep-section wheels, a bottle and a blinking rear light. Legs and arms follow the real pedal position, wheels turn at the right speed, riders lean into bends, and yours stands out of the saddle when you sprint.
+- **Rider sidebar.** Everyone on the road is listed Zwift-style with watts, W/kg, speed and a time gap, ordered by position with you highlighted. Click a rider for a card with their speed, cadence, heart rate, FTP, weight and gap (Esc closes it). The bunch are simulated riders with their own weights, FTPs and plausible heart rates.
+- **Climb panel.** Approaching and on the Col de SpinQuest you get distance left, climbing left, the average grade left, the grade now and over the next 500 m, VAM, estimated time to the top, the summit altitude and the steepest section ahead, over a grade-coloured profile with your position on it.
+- **A sober course map.** Survey grid, a route coloured by gradient, kilometre markers, direction arrows, vector landmark badges (hollow until discovered), segment bands, the lake, a scale bar and a north arrow. Click it to zoom and follow.
 - **Reactive effects.** Your aura takes your power-zone colour, sprints throw sparks and blur the edges of the screen, the screen edges glow in your heart-rate zone and pulse with each beat, and snow falls on the pass.
 - **Stop pedalling and the ride stops.** After a second of coasting the rider brakes to a halt (even downhill), and after 3 seconds without pedalling the clock, workout and scoring pause until you pedal again.
 - **Power drives speed.** Real cycling physics (gradient, drag, drafting) moves you around a 9 km loop of rolling hills. Climbs slow you down, descents speed you up.
@@ -49,6 +52,15 @@ The pairing list is filtered to trainers, power meters and heart-rate straps (by
 ## Graphics
 
 Pick **Low / Medium / High / Ultra** in the menu. The default is chosen from your GPU (Apple, NVIDIA and recent AMD or Intel Arc get High, other integrated graphics get Medium, software rendering gets Low). The picture also adapts its resolution on the fly to hold a steady frame rate. It runs at 60 fps on an Apple M1 at High. Needs a browser with WebGL 2 (current Chrome, Edge, Safari or Firefox).
+
+## Multiplayer groundwork
+
+There is no server yet, but the pieces that make remote riders possible are in place and tested (`js/net.js`):
+
+- **One rider shape.** You, the bunch, the coach and remote players all share the same fields (id, name, colour, position, speed, power, cadence, heart rate, weight, FTP), so the sidebar, the 3D scene and the network code treat them alike. `game.allRiders()`, `game.applyRemote(state)` and `game.removeRemote(id)` add and remove players on the fly.
+- **Wire format.** A small versioned JSON state sent about 10 times a second. Incoming states are validated and clamped, so a bad client can't inject NaNs or teleport. A real server should also check plausibility (speed against power) before relaying.
+- **Smooth remote motion.** Each remote rider is drawn about 150 ms in the past and interpolated between packets, with a brief extrapolation if one is late, and the sender's clock is estimated so jitter doesn't show.
+- **Try it.** Open `http://localhost:8000/?demo=remote` to ride with three simulated live riders arriving over a fake network with 90 ms latency and jitter. They appear in the sidebar with a cyan dot and in the 3D world.
 
 ## Supported devices
 
@@ -79,7 +91,9 @@ IndoorTrainer/
   js/game.js            rules: bots, drafting, orbs, segments, combos
   js/physics.js, gearing.js, workouts.js, achievements.js, sim.js, audio.js
   js/ble.js             Web Bluetooth, packet parsers, FTMS control point
-  js/hud.js             HUD, minimap, graphs, toasts, summary
+  js/hud.js             HUD: sidebar, rider card, climb panel, graphs, toasts, summary
+  js/hudviz.js          map, climb profile and elevation strip drawing
+  js/net.js             multiplayer groundwork: wire format, smoothing, loopback
   js/world/
     scene3d.js          the renderer: camera, lighting, post-processing, quality
     terrain.js          heightfield, lake, stream, tunnel cutting, colours

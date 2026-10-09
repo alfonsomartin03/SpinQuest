@@ -225,17 +225,36 @@ export class Renderer {
     for (const m of this.models.values()) this.scene.remove(m.model.group);
     this.models.clear();
     this.game = game;
-    const add = (r, opts, tag) => {
-      const model = new RiderModel(opts);
-      let label = null;
-      if (tag) { label = makeNameTag(r.name, r.isCoach ? '#ffd400' : '#ffffff'); label.position.set(0, 2.05, 0); model.group.add(label); }
-      model.group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-      this.scene.add(model.group);
-      this.models.set(r, { model, label, stand: 0 });
-    };
-    add(game.user, { jersey: '#ff3b6b', accent: '#ffffff', accent2: '#ffd166', pattern: 'hoops', frame: '#f2f3f7', wheel: '#ff3b6b', helmet: '#ffffff', helmetStripe: '#ff3b6b', skin: SKINS[1], hair: HAIRS[1], hairStyle: 'short', number: 'SQ', isUser: true }, false);
-    game.bots.forEach((b, i) => add(b, { ...BOT_LOOKS[i % BOT_LOOKS.length], jersey: b.color, skin: SKINS[(i * 2 + 1) % SKINS.length], hair: HAIRS[(i * 3 + 2) % HAIRS.length] }, true));
-    if (game.coach) add(game.coach, { jersey: '#ffd400', accent: '#16181d', accent2: '#ffffff', pattern: 'chevron', frame: '#111318', wheel: '#111318', helmet: '#16181d', helmetStripe: '#ffd400', skin: SKINS[3], hair: HAIRS[4], hairStyle: 'short', number: '★' }, true);
+  }
+
+  /** The look for a rider: yours, the bunch's, the coach's, or a generated one for a remote player. */
+  #lookFor(r) {
+    if (r.kind === 'you') return { jersey: '#ff3b6b', accent: '#ffffff', accent2: '#ffd166', pattern: 'hoops', frame: '#f2f3f7', wheel: '#ff3b6b', helmet: '#ffffff', helmetStripe: '#ff3b6b', skin: SKINS[1], hair: HAIRS[1], hairStyle: 'short', number: 'SQ', isUser: true };
+    if (r.kind === 'coach') return { jersey: '#ffd400', accent: '#16181d', accent2: '#ffffff', pattern: 'chevron', frame: '#111318', wheel: '#111318', helmet: '#16181d', helmetStripe: '#ffd400', skin: SKINS[3], hair: HAIRS[4], hairStyle: 'short', number: '★' };
+    if (r.kind === 'bot') { const i = r.i ?? 0; return { ...BOT_LOOKS[i % BOT_LOOKS.length], jersey: r.color, skin: SKINS[(i * 2 + 1) % SKINS.length], hair: HAIRS[(i * 3 + 2) % HAIRS.length] }; }
+    // remote: stable pseudo-random choices from their id, in the colour they picked
+    let h = 7;
+    for (const ch of r.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const base = BOT_LOOKS[h % BOT_LOOKS.length];
+    return { ...base, jersey: r.color, skin: SKINS[h % SKINS.length], hair: HAIRS[(h >> 3) % HAIRS.length], hairStyle: ['pony', 'short', 'bun'][(h >> 5) % 3], number: String(10 + (h % 90)) };
+  }
+
+  #addRider(r) {
+    const model = new RiderModel(this.#lookFor(r));
+    let label = null;
+    if (r.kind !== 'you') { label = makeNameTag(r.name, r.kind === 'coach' ? '#ffd400' : '#ffffff'); label.position.set(0, 2.05, 0); model.group.add(label); }
+    model.group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    this.scene.add(model.group);
+    this.models.set(r, { model, label, stand: 0 });
+  }
+
+  /** Riders can join and leave (remote players), so keep the models in step with the game's list. */
+  #syncRiders(game) {
+    const live = new Set(game.allRiders());
+    for (const [r, entry] of this.models) {
+      if (!live.has(r)) { this.scene.remove(entry.model.group); this.models.delete(r); }
+    }
+    for (const r of live) if (!this.models.has(r)) this.#addRider(r);
   }
 
   #placeRider(r, entry, game, dt) {
@@ -266,6 +285,7 @@ export class Renderer {
     this.clock += dt;
     const t = this.clock;
     if (this.game !== game) this.#bind(game);
+    this.#syncRiders(game);
     const user = game.user;
     this.#adapt(dt);
 

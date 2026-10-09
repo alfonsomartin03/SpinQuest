@@ -1,9 +1,10 @@
 // DOM heads-up display, workout/power graph, mini-map, toasts and the summary screen.
 
 import {
-  POWER_ZONES, HR_ZONES, SEGMENTS, LOOP, elevation, powerZone, levelFor, levelTitle, xpForLevel, fmtTime, clamp,
+  POWER_ZONES, HR_ZONES, LOOP, elevation, powerZone, levelFor, levelTitle, xpForLevel, fmtTime, clamp,
 } from './physics.js';
-import { MAP, LANDMARKS, BIOMES, biomeIndex, posAt, gradeAt } from './course.js';
+import { LANDMARKS, BIOMES, activeClimb } from './course.js';
+import { drawMap, drawClimbProfile, drawStrip, gradeColor as gradeColorImport } from './hudviz.js';
 import { totalDuration } from './workouts.js';
 import { ACHIEVEMENTS } from './achievements.js';
 
@@ -75,7 +76,21 @@ export class Hud {
     this.el = {};
     for (const id of ['h-power', 'h-pzone', 'h-zonebar', 'h-cad', 'h-hr', 'h-hrz', 'h-speed', 'h-wkg', 'h-time', 'h-dist', 'h-grade', 'h-kj',
       'h-draft', 'h-pause', 'h-board', 'h-mini', 'h-seg', 'h-seg-name', 'h-seg-bar', 'h-seg-time', 'h-score', 'h-mult', 'h-multbar',
-      'h-level', 'h-xpbar', 'h-step', 'h-next', 'h-target', 'h-twatts', 'h-remain', 'h-graph', 'h-wait', 'h-sim', 'h-map', 'h-mapnote', 'h-zone']) this.el[id] = $(id);
+      'h-level', 'h-xpbar', 'h-step', 'h-next', 'h-target', 'h-twatts', 'h-remain', 'h-graph', 'h-wait', 'h-sim', 'h-map', 'h-mapnote', 'h-zone', 'h-mapbox', 'h-board-count', 'h-rcard', 'h-climb', 'c-name', 'c-sub', 'c-left', 'c-elev', 'c-avg',
+      'c-now', 'c-next', 'c-vam', 'c-eta', 'c-top', 'c-steep', 'c-profile']) this.el[id] = $(id);
+    this.selectedId = null;
+    this.vamBuf = [];
+    this.spd = 0;
+    this.maxRows = 8;
+    this.layoutAt = -9;
+    this.vizAt = 0;
+    this.el['h-board'].addEventListener('click', (ev) => {
+      const row = ev.target.closest('.rrow');
+      if (!row) return;
+      this.selectedId = this.selectedId === row.dataset.id ? null : row.dataset.id;
+      this.boardAt = -1;
+    });
+    addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { this.selectedId = null; this.boardAt = -1; } });
     this.mapZoom = false;
     $('h-mapbox').addEventListener('click', () => { this.mapZoom = !this.mapZoom; $('h-mapbox').classList.toggle('zoomed', this.mapZoom); });
     this.el['h-zonebar'].innerHTML = POWER_ZONES.map(() => '<i></i>').join('');
@@ -141,8 +156,13 @@ export class Hud {
     this.#workout(game);
     if (game.clock - this.boardAt > 0.2) { this.boardAt = game.clock; this.#board(game); }
     this.#segment(game);
-    this.#mini(game);
-    this.#map(game);
+    this.#climb(game);
+    if (game.clock - this.vizAt > 0.066) { // the map and strip don't need 60 fps
+      this.vizAt = game.clock;
+      drawStrip(this.el['h-mini'], game);
+      drawMap(this.el['h-map'], game, { zoom: this.mapZoom, selectedId: this.selectedId });
+      setText(this.el['h-mapnote'], this.mapZoom ? 'following' : `${Object.keys(game.progress.discovered).length}/${LANDMARKS.length} found`);
+    }
     this.#zone(game);
     if (game.clock - this.graphAt > 0.5) {
       this.graphAt = game.clock;
@@ -181,12 +201,68 @@ export class Hud {
     }
   }
 
+  /** How many sidebar rows fit above the bottom panels. */
+  #fitRows(clock) {
+    if (clock - this.layoutAt < 1) return;
+    this.layoutAt = clock;
+    const bottom = document.querySelector('#hud .bottom');
+    if (!bottom) return;
+    const mapH = this.el['h-mapbox'].offsetHeight || 0;
+    const avail = bottom.getBoundingClientRect().top - 14 - 10 - mapH - 60 - 10;
+    this.maxRows = clamp(Math.floor(avail / 30), 3, 10);
+  }
+
   #board(game) {
-    const rows = game.board().slice(0, 10);
-    this.el['h-board'].innerHTML = rows.map(({ r, gap }, i) => {
-      const g = r.isUser ? '' : `${gap > 0 ? '+' : '−'}${Math.abs(gap) < 100 ? Math.abs(gap).toFixed(0) : (Math.abs(gap) / 1000).toFixed(2) + 'k'}${Math.abs(gap) < 100 ? ' m' : ''}`;
-      return `<div class="row ${r.isUser ? 'me' : ''}"><span>${i + 1}</span><span class="sw" style="background:${r.isCoach ? '#ffd400' : r.color}"></span><span>${r.name}</span><span class="gap">${r.isUser ? Math.round(game.p3) + ' W' : g}</span></div>`;
+    this.#fitRows(game.clock);
+    const all = game.board();
+    const n = Math.min(all.length, this.maxRows);
+    const ui = all.findIndex((e) => e.r.isUser);
+    const start = clamp(ui - Math.floor(n / 2), 0, all.length - n);
+    const user = game.user;
+    const mark = { coach: '<em class="kind k-coach" title="Coach">★</em>', remote: '<em class="kind k-remote" title="Live rider">●</em>' };
+    const rows = all.slice(start, start + n).map(({ r, gapSec, gap }, i) => {
+      const watts = Math.round(r.p3);
+      const wkg = r.weight ? (r.p3 / r.weight).toFixed(1) : '--';
+      const speed = (r.v * 3.6).toFixed(r.isUser ? 1 : 0);
+      const gapTxt = r.isUser ? '' : fmtGap(gapSec);
+      const col = r.kind === 'coach' ? '#ffd400' : r.color;
+      return `<div class="rrow ${r.isUser ? 'me' : ''} ${r.id === this.selectedId ? 'sel' : ''} ${r.drafting ? 'draft' : ''}" data-id="${r.id}" title="${r.isUser ? 'You' : `${Math.abs(Math.round(gap))} m ${gap > 0 ? 'ahead' : 'behind'}`}">
+        <i class="rpos">${start + i + 1}</i><i class="rcol" style="background:${col}"></i>
+        <span class="rname">${mark[r.kind] ?? ''}${esc(r.name)}</span>
+        <span class="rpow"><b>${watts}</b><small>${wkg}</small></span>
+        <span class="rspd">${speed}</span>
+        <span class="rgap ${gapSec > 0 ? 'ahead' : 'behind'}">${gapTxt}</span></div>`;
     }).join('');
+    this.el['h-board'].innerHTML = `<div class="rhead"><span></span><span></span><span>Rider</span><span>W · W/kg</span><span>km/h</span><span>Gap</span></div>${rows}`;
+    setText(this.el['h-board-count'], `${all.length} riding`);
+    void user;
+    this.#card(game, all);
+  }
+
+  /** Details for the rider picked in the list (click a row; Esc clears). */
+  #card(game, all) {
+    const card = this.el['h-rcard'];
+    const e = all.find((x) => x.r.id === this.selectedId);
+    if (!e) { card.hidden = true; return; }
+    const { r, gap, gapSec } = e;
+    const wkg = r.p3 / r.weight;
+    const ftpWkg = r.ftp / r.weight;
+    const zone = POWER_ZONES[powerZone(r.p3, r.ftp)];
+    const dist = Math.max(0, r.x - (game.user.x - game.distance)) / 1000;
+    card.hidden = false;
+    card.innerHTML = `
+      <div class="rc-head"><i style="background:${r.kind === 'coach' ? '#ffd400' : r.color}"></i><b>${esc(r.name)}</b><button class="rc-x" aria-label="Close">×</button></div>
+      <div class="rc-big"><span style="color:${zone.color}">${Math.round(r.p3)}<small>W</small></span><span>${wkg.toFixed(1)}<small>W/kg</small></span></div>
+      <div class="rc-grid">
+        <div><small>Speed</small><b>${(r.v * 3.6).toFixed(1)} km/h</b></div>
+        <div><small>Cadence</small><b>${r.cad ? Math.round(r.cad) : '--'} rpm</b></div>
+        <div><small>Heart rate</small><b>${r.hr != null ? Math.round(r.hr) : '--'} bpm</b></div>
+        <div><small>${r.isUser ? 'Your FTP' : 'FTP'}</small><b>${Math.round(r.ftp)} W · ${ftpWkg.toFixed(1)}</b></div>
+        <div><small>Weight</small><b>${Math.round(r.weight)} kg</b></div>
+        <div><small>${r.isUser ? 'Ridden' : gap >= 0 ? 'Ahead by' : 'Behind by'}</small><b>${r.isUser ? dist.toFixed(2) + ' km' : `${fmtGap(gapSec).slice(1)} · ${Math.abs(Math.round(gap))} m`}</b></div>
+      </div>
+      <div class="rc-foot">${r.kind === 'bot' ? 'Simulated rider' : r.kind === 'remote' ? 'Live rider' : r.kind === 'coach' ? 'Your workout coach' : ''}${r.drafting ? ' · drafting' : ''}</div>`;
+    card.querySelector('.rc-x').onclick = () => { this.selectedId = null; this.boardAt = -1; };
   }
 
   #segment(game) {
@@ -201,7 +277,7 @@ export class Hud {
 
   #zone(game) {
     const phase = ((game.user.x % LOOP) + LOOP) % LOOP;
-    const bi = biomeIndex(phase);
+    const bi = BIOMES.findIndex((b) => phase >= b.start && phase < b.end);
     let best = null;
     for (const lm of LANDMARKS) {
       const dist = (lm.d - phase + LOOP) % LOOP;
@@ -209,130 +285,52 @@ export class Hud {
     }
     const found = best && game.progress.discovered[best.lm.id];
     const dTxt = best ? (best.dist < 1000 ? `${Math.round(best.dist / 10) * 10} m` : `${(best.dist / 1000).toFixed(1)} km`) : '';
-    setText(this.el['h-zone'], `📍 ${BIOMES[bi].name} · ${Math.round(elevation(game.user.x))} m${best ? `   ·   Next: ${found ? `${best.lm.emoji} ${best.lm.name}` : '❔ unknown landmark'} in ${dTxt}` : ''}`);
+    setText(this.el['h-zone'], `${BIOMES[bi].name} · ${Math.round(elevation(game.user.x))} m${best ? `   ·   Next: ${found ? best.lm.name : 'unknown landmark'} in ${dTxt}` : ''}`);
   }
 
-  /** Elevation strip: zone colours, segments, landmarks and every rider. */
-  #mini(game) {
-    const cv = this.el['h-mini'];
-    const ctx = cv.getContext('2d');
-    const { width: w, height: h } = cv;
-    ctx.clearRect(0, 0, w, h);
-    const pad = 16;
-    const X = (d) => pad + ((((d % LOOP) + LOOP) % LOOP) / LOOP) * (w - pad * 2);
-    if (!this.profile) {
-      this.profile = [];
-      for (let d = 0; d <= LOOP; d += 50) this.profile.push([d, elevation(d)]);
-      this.emin = Math.min(...this.profile.map((p) => p[1]));
-      this.emax = Math.max(...this.profile.map((p) => p[1]));
+  /** Distance left, elevation left and gradient information while on (or about to start) a climb. */
+  #climb(game) {
+    const e = this.el;
+    const act = activeClimb(game.user.x);
+    e['h-climb'].hidden = !act;
+    if (!act) { this.vamBuf.length = 0; return; }
+    const { climb, stats: st } = act;
+    // smoothed speed and a 60 s climbing-rate (VAM) window
+    this.spd += (game.user.v - this.spd) * 0.04;
+    const buf = this.vamBuf;
+    if (st.state === 'on' && (!buf.length || game.clock - buf[buf.length - 1].t > 0.5)) {
+      buf.push({ t: game.clock, alt: st.altNow });
+      while (buf.length && game.clock - buf[0].t > 60) buf.shift();
     }
-    const top = 26, bottom = h - 12;
-    const Y = (el) => bottom - ((el - this.emin) / (this.emax - this.emin)) * (bottom - top);
-    for (const b of BIOMES) { // zone colour band
-      ctx.fillStyle = `rgb(${b.ground.map(Math.round)})`;
-      ctx.fillRect(X(b.start), bottom + 3, X(b.end) - X(b.start), 5);
-    }
-    ctx.beginPath();
-    ctx.moveTo(pad, bottom + 2);
-    this.profile.forEach(([d, el]) => ctx.lineTo(pad + (d / LOOP) * (w - pad * 2), Y(el)));
-    ctx.lineTo(w - pad, bottom + 2);
-    const g = ctx.createLinearGradient(0, top, 0, bottom);
-    g.addColorStop(0, 'rgba(255,255,255,.3)');
-    g.addColorStop(1, 'rgba(255,255,255,.06)');
-    ctx.fillStyle = g;
-    ctx.fill();
-    for (const s of SEGMENTS) {
-      ctx.strokeStyle = s.color; ctx.lineWidth = 4; ctx.lineCap = 'round';
-      ctx.beginPath();
-      for (let d = s.start; d <= s.end; d += 50) { const x = X(d), y = Y(elevation(d)); d === s.start ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
-      ctx.stroke();
-    }
-    ctx.font = '14px system-ui, "Apple Color Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    for (const lm of LANDMARKS) {
-      const x = X(lm.d), y = Y(elevation(lm.d));
-      if (game.progress.discovered[lm.id]) ctx.fillText(lm.emoji, x, Math.max(14, y - 6));
-      else { ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.fillText('?', x, Math.max(14, y - 6)); }
-    }
-    ctx.textAlign = 'start';
-    for (const { r } of game.board().slice().reverse()) {
-      ctx.fillStyle = r.isCoach ? '#ffd400' : r.color;
-      ctx.beginPath(); ctx.arc(X(r.x), Y(elevation(r.x)), r.isUser ? 5.5 : 3.5, 0, 7); ctx.fill();
-      if (r.isUser) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
-    }
+    let vam = 0;
+    if (buf.length > 10) { const o = buf[0], n = buf[buf.length - 1]; vam = Math.max(0, ((n.alt - o.alt) / (n.t - o.t)) * 3600); }
+    const km = (m) => (m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`);
+    const pct = (g) => `${(g * 100).toFixed(1)}%`;
+    setText(e['c-name'], climb.name);
+    setText(e['c-sub'], st.state === 'before'
+      ? `Starts in ${km(st.toStart)} · ${(st.len / 1000).toFixed(1)} km at ${pct(st.avgAll)} avg`
+      : `${Math.round(st.progress * 100)}% done · ${(st.len / 1000).toFixed(1)} km at ${pct(st.avgAll)} avg`);
+    setText(e['c-left'], km(st.left));
+    setText(e['c-elev'], `${Math.round(st.elevLeft)} m`);
+    setText(e['c-avg'], pct(st.avgLeft));
+    setText(e['c-now'], pct(st.gradeNow));
+    e['c-now'].style.color = gradeColorFor(st.gradeNow);
+    setText(e['c-next'], pct(st.next500));
+    e['c-next'].style.color = gradeColorFor(st.next500);
+    setText(e['c-vam'], vam ? Math.round(vam).toLocaleString() : '--');
+    setText(e['c-eta'], this.spd > 1.5 && st.state === 'on' ? fmtTime(st.left / this.spd) : '--');
+    setText(e['c-top'], `${Math.round(st.summitAlt).toLocaleString()} m`);
+    setText(e['c-steep'], st.left > 30 ? `Steepest ahead ${pct(st.steepest.grade)} in ${km(st.steepest.dist)}` : 'Almost there');
+    drawClimbProfile(e['c-profile'], climb, st);
   }
+}
 
-  /** Top-down map of the loop, coloured by gradient. Click to zoom and follow the rider. */
-  #map(game) {
-    const cv = this.el['h-map'];
-    const ctx = cv.getContext('2d');
-    const { width: w, height: h } = cv;
-    ctx.clearRect(0, 0, w, h);
-    const pad = 34;
-    const fit = Math.min((w - pad * 2) / (MAP.maxX - MAP.minX), (h - pad * 2) / (MAP.maxY - MAP.minY));
-    const me = posAt(game.user.x);
-    const s = this.mapZoom ? fit * 3.4 : fit;
-    const cx = this.mapZoom ? me.x : (MAP.minX + MAP.maxX) / 2;
-    const cy = this.mapZoom ? me.y : (MAP.minY + MAP.maxY) / 2;
-    const P = (x, y) => [w / 2 + (x - cx) * s, h / 2 - (y - cy) * s];
-    ctx.save();
-    ctx.beginPath(); ctx.roundRect(0, 0, w, h, 24); ctx.clip();
-    ctx.fillStyle = 'rgba(30,60,50,.35)'; ctx.fillRect(0, 0, w, h);
-
-    // lake
-    const lake = posAt(7600);
-    const [lx, ly] = P(lake.x - 230, lake.y);
-    ctx.fillStyle = 'rgba(70,150,220,.5)';
-    ctx.beginPath(); ctx.ellipse(lx, ly, 150 * s * 0.85, 95 * s * 0.85, 0.4, 0, 7); ctx.fill();
-
-    const colour = (g) => (g < -0.025 ? '#6fb8ff' : g < 0.02 ? '#8fdc8a' : g < 0.045 ? '#f5d04a' : g < 0.07 ? '#ff9f2e' : '#ff4d4d');
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    const trace = (from, to) => {
-      ctx.beginPath();
-      let first = true;
-      for (const p of MAP.pts) {
-        if (p.d < from || p.d > to) continue;
-        const [x, y] = P(p.x, p.y);
-        first ? ctx.moveTo(x, y) : ctx.lineTo(x, y); first = false;
-      }
-    };
-    trace(0, 10000); ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 9; ctx.stroke();
-    for (const sg of SEGMENTS) { trace(sg.start, sg.end); ctx.strokeStyle = sg.color; ctx.lineWidth = 9; ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1; }
-    for (let i = 1; i < MAP.pts.length; i++) {
-      const a = MAP.pts[i - 1], b = MAP.pts[i];
-      const [x0, y0] = P(a.x, a.y), [x1, y1] = P(b.x, b.y);
-      ctx.strokeStyle = colour(gradeAt(b.d % LOOP)); ctx.lineWidth = 4.5;
-      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-    }
-
-    ctx.font = `${this.mapZoom ? 24 : 20}px system-ui, "Apple Color Emoji", sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (const lm of LANDMARKS) {
-      const q = posAt(lm.d);
-      const [x, y] = P(q.x, q.y);
-      if (game.progress.discovered[lm.id]) ctx.fillText(lm.emoji, x, y - 12);
-      else { ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillText('?', x, y - 11); }
-    }
-    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
-
-    for (const { r } of game.board().slice().reverse()) {
-      if (r.isUser) continue;
-      const q = posAt(r.x);
-      const [x, y] = P(q.x, q.y);
-      ctx.fillStyle = r.isCoach ? '#ffd400' : r.color;
-      ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
-    }
-    const [ux, uy] = P(me.x, me.y);
-    const pulse = (game.clock * 1.2) % 1;
-    ctx.strokeStyle = `rgba(255,59,107,${1 - pulse})`; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(ux, uy, 9 + pulse * 18, 0, 7); ctx.stroke();
-    ctx.fillStyle = '#ff3b6b'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(ux, uy, 9, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.font = '700 18px system-ui, sans-serif';
-    ctx.fillText('N ↑', 16, 28);
-    ctx.restore();
-    setText(this.el['h-mapnote'], this.mapZoom ? 'Following · click to zoom out' : `${Object.keys(game.progress.discovered).length}/${LANDMARKS.length} landmarks · click to zoom`);
-  }
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const gradeColorFor = (g) => gradeColorImport(g);
+function fmtGap(sec) {
+  const a = Math.abs(sec);
+  if (a >= 600) return `${sec > 0 ? '+' : '−'}10:00+`;
+  return `${sec > 0 ? '+' : '−'}${Math.floor(a / 60)}:${String(Math.floor(a % 60)).padStart(2, '0')}`;
 }
 
 // ---- Toasts -------------------------------------------------------------------
