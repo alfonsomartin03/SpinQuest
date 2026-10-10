@@ -377,7 +377,22 @@ $('m-fit').addEventListener('click', downloadFit);
 
 // ---- game flow ------------------------------------------------------------------------------
 
+// ---- keep the screen on during a ride ---------------------------------------------------------------
+// Screen Wake Lock (Chrome, Edge, Safari 16.4+). The browser drops the lock whenever the tab is hidden, so take it again
+// when the tab comes back; where the API is missing there is nothing to do.
+let wakeLock = null;
+async function holdScreen() {
+  if (!('wakeLock' in navigator) || wakeLock || document.visibilityState !== 'visible') return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch { wakeLock = null; /* low battery, or the browser said no: the screen may dim as usual */ }
+}
+function releaseScreen() { wakeLock?.release().catch(() => {}); wakeLock = null; }
+document.addEventListener('visibilitychange', () => { if (mode === 'ride') holdScreen(); });
+
 function startRide() {
+  holdScreen();
   initAudio();
   fit = null; // the previous ride's file is deleted if it was never downloaded
   $('m-fit').hidden = $('m-fit-note').hidden = true;
@@ -410,6 +425,7 @@ function startRide() {
 
 function endRide() {
   if (mode !== 'ride') return;
+  releaseScreen();
   mode = 'summary';
   clearTimeout(endTimer);
   endTimer = null;

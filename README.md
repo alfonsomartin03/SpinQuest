@@ -37,6 +37,8 @@ Your trainer must allow a second Bluetooth connection (most modern FTMS trainers
 - **Orbs and segments.** Collect orb arcs on the road. Ride three timed segments (a climb, a flat sprint, a downhill dash) against the pack and chase your PRs.
 - **Progression.** Points become XP, levels and achievements, saved in your browser (`localStorage`).
 
+The screen stays awake during a ride (Screen Wake Lock, where the browser supports it), so it won't dim or lock mid-workout.
+
 Simulator controls: `↑`/`↓` ±10 W, `PgUp`/`PgDn` ±50 W, hold `Space` to sprint, `P` toggles "stop pedalling", `M` mutes.
 
 ## Export a ride (.fit)
