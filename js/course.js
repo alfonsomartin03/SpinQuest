@@ -255,6 +255,38 @@ export function activeClimb(d, lead = 450) {
   return null;
 }
 
+/**
+ * One entry per complete ascent of `climb` in a ride: the time from the foot to the top and the averages on the way.
+ * `samples` are the per-second ride samples ({p, hr, v, d}); sample i covers second i to i + 1.
+ */
+export function climbSplits(samples, climb) {
+  const starts = new Map(), ends = new Map();
+  let prev = 0;
+  samples.forEach((s, i) => {
+    for (let k = Math.floor(prev / LOOP); k <= Math.floor(s.d / LOOP); k++) {
+      for (const [map, b] of [[starts, climb.start], [ends, climb.end]]) {
+        const at = k * LOOP + b;
+        if (prev < at && at <= s.d && !map.has(k)) map.set(k, i + (at - prev) / (s.d - prev));
+      }
+    }
+    prev = s.d;
+  });
+  const out = [];
+  for (const [k, t0] of starts) {
+    const t1 = ends.get(k);
+    if (t1 == null) continue;
+    const part = samples.slice(Math.floor(t0), Math.ceil(t1));
+    const hrs = part.filter((x) => x.hr > 0);
+    out.push({
+      lap: k + 1, time: t1 - t0,
+      avgPower: part.reduce((a, x) => a + x.p, 0) / part.length,
+      avgHr: hrs.length ? hrs.reduce((a, x) => a + x.hr, 0) / hrs.length : null,
+      avgSpeed: (climb.end - climb.start) / (t1 - t0),
+    });
+  }
+  return out;
+}
+
 // ---- Timed segments ---------------------------------------------------------------------------
 
 export const SEGMENTS = [

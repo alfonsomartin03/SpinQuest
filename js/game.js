@@ -63,6 +63,7 @@ export class Game {
     this.t = 0; // active riding time (excludes pauses)
     this.wt = 0; // workout clock
     this.started = false;
+    this.startedAt = 0; // wall-clock ms of the first pedal stroke
     this.paused = true;
     this.lastMove = 0;
     this.idle = 0;
@@ -128,6 +129,7 @@ export class Game {
     const pw = Math.max(0, inp.power ?? 0);
     this.pw = pw;
     this.cad = inp.cadence ?? (pw > 0 ? 80 : 0);
+    this.cadMeasured = inp.cadence ?? null; // what the sensor really said; this.cad is padded for the game
     this.hr = inp.hr ?? null;
     this.p3 += (pw - this.p3) * (1 - Math.exp(-dt / 3));
     this.pSmooth += (pw - this.pSmooth) * (1 - Math.exp(-dt / 0.8));
@@ -137,7 +139,7 @@ export class Game {
     // Pedalling means real power or cadence (a spinning flywheel's last few rpm don't count).
     if (pw > 3 || this.cad > 8) {
       this.lastMove = this.clock;
-      if (!this.started) { this.started = true; this.#toast('Go!', 'Ride started', 'go'); this.#sfx('step'); }
+      if (!this.started) { this.started = true; this.startedAt = Date.now(); this.#toast('Go!', 'Ride started', 'go'); this.#sfx('step'); }
     }
     this.idle = this.clock - this.lastMove; // seconds since the rider last pedalled
     this.paused = !this.started || this.idle > IDLE_PAUSE;
@@ -376,7 +378,7 @@ export class Game {
   }
 
   #everySecond() {
-    this.samples.push({ p: this.secN ? this.secP / this.secN : 0, hr: this.secHr || null });
+    this.samples.push({ p: this.secN ? this.secP / this.secN : 0, hr: this.secHr || null, cad: this.cadMeasured, v: this.user.v, d: this.distance });
     this.secP = 0; this.secN = 0;
     const last5 = this.samples.slice(-5);
     if (last5.length === 5) this.maxP5 = Math.max(this.maxP5, last5.reduce((a, s) => a + s.p, 0) / 5);

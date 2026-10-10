@@ -279,3 +279,15 @@ kbd { background: rgba(255, 255, 255, 0.14); border-radius: 5px; padding: 1px 6p
 .rname .kind { margin: 0 4px 0 0; padding: 0; background: none; font-size: 9px; letter-spacing: 0; vertical-align: 0; }
 .rname .k-remote { color: #6fe0ff; }
 .rname .k-coach { color: #ffd400; }
+
+/* ---------- ride export ---------- */
+.fit-row { display: flex; gap: 16px; align-items: center; justify-content: space-between; margin-top: 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, 0.04); }
+.fit-row small { display: block; margin-top: 4px; line-height: 1.5; }
+.fit-row select { font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px; }
+.fit-row .btn { white-space: nowrap; }
+#m-fit { margin-top: 10px; }
+
+.splits { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+.splits th { text-align: right; color: var(--muted); font-weight: 500; padding: 3px 8px; }
+.splits td { text-align: right; padding: 3px 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.splits th:first-child, .splits td:first-child { text-align: left; }

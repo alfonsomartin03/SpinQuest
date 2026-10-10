@@ -13,6 +13,7 @@ import { LoopbackSession, DemoPeers } from './net.js';
 import { initAudio, sfx, setMuted, isMuted } from './audio.js';
 import { ACHIEVEMENTS } from './achievements.js';
 import { LANDMARKS } from './course.js';
+import { buildFit, fitFileName, pickPlace, PLACES, MIN_SECONDS } from './export.js';
 import { levelFor, levelTitle, xpForLevel, defaultHrLimits, cleanHrLimits } from './physics.js';
 
 window.__sqLoaded = true;
@@ -330,10 +331,43 @@ function driveTrainer(dt) {
   showGear();
 }
 
+// ---- ride export (.fit) -------------------------------------------------------------------------
+// The file only ever exists in memory: it is dropped when the next ride starts, and never saved anywhere else.
+
+let fit = null; // { bytes, name, place } for the ride that just ended
+$('s-place').innerHTML = `<option value="random">random: Nemo or Bermuda</option>${PLACES.map((p) => `<option value="${p.id}">${p.name} (${p.note})</option>`).join('')}`;
+
+function makeFit(place, random = false) {
+  const ok = game && game.startedAt && game.samples.length >= MIN_SECONDS;
+  fit = ok ? { bytes: buildFit({ samples: game.samples, startedAt: game.startedAt, place }), name: fitFileName(game.startedAt), place } : null;
+  $('s-fit').hidden = !fit;
+  $('s-place').options[0].textContent = random ? `random: Nemo or Bermuda (this time: ${place.name})` : 'random: Nemo or Bermuda';
+  $('m-fit').hidden = $('m-fit-note').hidden = !fit;
+}
+
+function downloadFit() {
+  if (!fit) return;
+  const url = URL.createObjectURL(new Blob([fit.bytes], { type: 'application/octet-stream' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: fit.name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  toast({ text: 'Downloaded', sub: `${fit.name}: placed at ${fit.place.name}`, kind: 'go' });
+}
+$('s-place').addEventListener('change', () => {
+  const v = $('s-place').value;
+  makeFit(v === 'random' ? pickPlace() : PLACES.find((p) => p.id === v), v === 'random');
+});
+$('s-fit-dl').addEventListener('click', downloadFit);
+$('m-fit').addEventListener('click', downloadFit);
+
 // ---- game flow ------------------------------------------------------------------------------
 
 function startRide() {
   initAudio();
+  fit = null; // the previous ride's file is deleted if it was never downloaded
+  $('m-fit').hidden = $('m-fit-note').hidden = true;
   const p = readProfile();
   const workout = WORKOUTS.find((w) => w.id === p.workout);
   useSim = !links.trainer;
@@ -377,6 +411,8 @@ function endRide() {
   $('hud').hidden = true;
   showSummary(game, game.levelAtStart, game.xpAtStart);
   $('summary').hidden = false;
+  $('s-place').value = 'random';
+  makeFit(pickPlace(), true);
 }
 
 function toMenu() {

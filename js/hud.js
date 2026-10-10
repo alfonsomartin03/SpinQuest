@@ -3,7 +3,7 @@
 import {
   POWER_ZONES, HR_ZONES, LOOP, elevation, powerZone, levelFor, levelTitle, xpForLevel, fmtTime, clamp,
 } from './physics.js';
-import { LANDMARKS, BIOMES, activeClimb } from './course.js';
+import { LANDMARKS, BIOMES, CLIMBS, activeClimb, climbSplits } from './course.js';
 import { drawMap, drawClimbProfile, drawStrip, gradeColor as gradeColorImport } from './hudviz.js';
 import { totalDuration } from './workouts.js';
 import { ACHIEVEMENTS } from './achievements.js';
@@ -396,6 +396,16 @@ export function showSummary(game, levelBefore, xpBefore) {
   };
   $('s-zp').innerHTML = zoneRows(POWER_ZONES, sum.zonePow);
   $('s-zh').innerHTML = sum.avgHr ? zoneRows(HR_ZONES, sum.zoneHr) : '<small>No heart-rate data</small>';
+
+  const splits = CLIMBS.map((c) => ({ c, rows: climbSplits(sum.samples, c) })).filter((x) => x.rows.length);
+  $('s-splits').hidden = !splits.length;
+  $('s-splits').innerHTML = splits.map(({ c, rows }) => {
+    const best = Math.min(...rows.map((r) => r.time));
+    return `<h4>${c.name}: splits per ascent</h4><table class="splits"><thead><tr><th>#</th><th>Time</th><th></th><th>Avg W</th><th>Avg HR</th><th>km/h</th></tr></thead><tbody>${rows.map((r) => {
+      const gap = r.time - best;
+      return `<tr><td>${r.lap}</td><td>${fmtTime(r.time)}</td><td>${gap < 0.5 ? '<b>best</b>' : '+' + fmtTime(gap)}</td><td>${Math.round(r.avgPower)}</td><td>${r.avgHr ? Math.round(r.avgHr) : '--'}</td><td>${(r.avgSpeed * 3.6).toFixed(1)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  }).join('');
 
   $('s-ach').innerHTML = sum.unlocked.map((id) => {
     const a = ACHIEVEMENTS.find((x) => x.id === id);

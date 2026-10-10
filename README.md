@@ -3,7 +3,7 @@ Cycling Indoor Training App
 
 # SpinQuest
 
-A game layer for indoor cycling. Connect your smart trainer (or power meter) and heart-rate strap over Bluetooth, pick a workout, and ride a looping virtual world that reacts to your live numbers. You record the activity on another device. SpinQuest never spoofs a location or uploads anything, and it only controls the trainer's resistance if you let it (see below).
+A game layer for indoor cycling. Connect your smart trainer (or power meter) and heart-rate strap over Bluetooth, pick a workout, and ride a looping virtual world that reacts to your live numbers. SpinQuest never uploads anything itself; you can download your ride as a `.fit` file (see below) or record it on another device. It only controls the trainer's resistance if you let it (see below).
 
 ## Run
 
@@ -36,6 +36,15 @@ Your trainer must allow a second Bluetooth connection (most modern FTMS trainers
 - **Progression.** Points become XP, levels and achievements, saved in your browser (`localStorage`).
 
 Simulator controls: `↑`/`↓` ±10 W, `PgUp`/`PgDn` ±50 W, hold `Space` to sprint, `P` toggles "stop pedalling", `M` mutes.
+
+## Export a ride (.fit)
+
+When a ride ends, the summary screen offers **Download .fit** (also on the menu until you start another ride). Upload the file to Strava, Garmin Connect, TrainingPeaks, intervals.icu and similar.
+
+- **Spoofed location, on purpose.** The course is laid over a funny spot in open ocean (Null Island, Point Nemo, the Bermuda Triangle, Challenger Deep or the Sargasso Sea), random each ride unless you pick one. No road is anywhere near, so it can't touch a real segment, KOM or heatmap.
+- **True to the ride.** The route is the virtual course projected at real scale, so the file's distance, elevation, grade and every bend match what you rode (`test/export.test.mjs` checks the geodesic length, altitude and headings). One record per second of riding: power, heart rate, cadence, speed, distance, altitude, grade, position.
+- **Honest about being virtual.** The sport is set to cycling / virtual activity, so Strava files it as a Virtual Ride. The altitudes are the course's (1,180 to 1,374 m) wherever it is placed.
+- **Never stored.** The file exists only in memory. It is gone when you close the tab or start another ride; nothing is written to disk, `localStorage` or a server unless you download it.
 
 ## Trainer control (virtual gears)
 

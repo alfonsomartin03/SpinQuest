@@ -114,6 +114,8 @@
     <div class="actions">
       <button class="btn primary big" id="start">Start ride</button>
       <p class="small" id="start-hint"></p>
+      <button class="btn" id="m-fit" hidden>⬇ Download last ride (.fit)</button>
+      <p class="small" id="m-fit-note" hidden>Kept in memory only. It is gone when you close this tab or start another ride.</p>
     </div>
 
     <footer class="level-row">
@@ -220,11 +222,21 @@
       <div><h4>Time in power zones</h4><div id="s-zp"></div></div>
       <div><h4>Time in heart-rate zones</h4><div id="s-zh"></div></div>
     </div>
+    <div id="s-splits" hidden></div>
     <div id="s-ach"></div>
     <div class="level-row">
       <div><b id="s-level"></b> <span id="s-lvltitle"></span></div>
       <div class="bar"><i id="s-xpbar"></i></div>
       <small id="s-xp"></small>
+    </div>
+    <div class="fit-row" id="s-fit" hidden>
+      <div>
+        <b>Upload this ride</b>
+        <small>Download a .fit file for Strava, Garmin Connect, TrainingPeaks and others. It is marked as a virtual ride, and the route is your course laid over
+          <select id="s-place" aria-label="Where to place the route"></select>
+          at true scale, so distance, climbing and turns match. Kept in memory only: it is deleted when you close this tab or start another ride.</small>
+      </div>
+      <button class="btn primary" id="s-fit-dl">⬇ Download .fit</button>
     </div>
     <div class="actions"><button class="btn primary big" id="s-again">Back to menu</button></div>
   </div>
