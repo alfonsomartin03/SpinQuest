@@ -1,7 +1,7 @@
 // Drawing for the map, the climb profile and the elevation strip. Pure canvas, no DOM lookups, so it is
 // easy to test and restyle. The look is deliberately sober: dark slate, thin lines, vector glyphs.
 
-import { LOOP, TOTAL, SPUR_LEN, JUNCTION, MAP, SPUR_MAP, LANDMARKS, BIOMES, SEGMENTS, LAKE_SHAPE, elevation, gradeAt, posAt, headingAt } from './course.js';
+import { LOOP, TOTAL, SPURS, spurAt, MAP, SPUR_MAP, LANDMARKS, BIOMES, SEGMENTS, LAKE_SHAPE, elevation, gradeAt, posAt, headingAt } from './course.js';
 
 // ---- shared palette -------------------------------------------------------------------------------------------
 
@@ -128,13 +128,16 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     traceRoute(ctx, P, sg.start, sg.end);
     ctx.strokeStyle = sg.color; ctx.globalAlpha = 0.5; ctx.lineWidth = wt(12); ctx.stroke(); ctx.globalAlpha = 1;
   }
-  // the road around the climb: a dashed route off the fork and back onto the loop
+  // the detours: dashed routes off each fork and back onto the loop (brighter once you are on one or have chosen it)
   const ext = game.extension();
-  traceRoute(ctx, P, LOOP, TOTAL);
-  ctx.strokeStyle = '#03060b'; ctx.lineWidth = wt(8.5); ctx.stroke();
-  traceRoute(ctx, P, LOOP, TOTAL);
-  ctx.strokeStyle = ext.state === 'on' || ext.armed ? '#3ee0cf' : 'rgba(62,224,207,0.62)'; ctx.lineWidth = wt(4.2);
-  ctx.setLineDash([wt(9), wt(6)]); ctx.stroke(); ctx.setLineDash([]);
+  for (const sp of SPURS) {
+    const lit = (ext.state === 'on' || ext.armed) && ext.spur === sp;
+    traceRoute(ctx, P, sp.base, sp.end);
+    ctx.strokeStyle = '#03060b'; ctx.lineWidth = wt(8.5); ctx.stroke();
+    traceRoute(ctx, P, sp.base, sp.end);
+    ctx.strokeStyle = lit ? sp.color : `${sp.color}a0`; ctx.lineWidth = wt(4.2);
+    ctx.setLineDash([wt(9), wt(6)]); ctx.stroke(); ctx.setLineDash([]);
+  }
   // route: casing then grade-coloured line
   traceRoute(ctx, P, 0, LOOP);
   ctx.strokeStyle = '#03060b'; ctx.lineWidth = wt(8.5); ctx.stroke();
@@ -157,26 +160,30 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     ctx.beginPath(); ctx.moveTo(-2.4, -3); ctx.lineTo(1.6, 0); ctx.lineTo(-2.4, 3); ctx.stroke();
     ctx.restore();
   }
-  for (let d = LOOP + 500; d < TOTAL; d += 1000) {
-    const a = posAt(d), b = posAt(d + 12);
-    const [x, y] = P(a.x, a.y), [x2, y2] = P(b.x, b.y);
-    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(y2 - y, x2 - x));
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.beginPath(); ctx.moveTo(-2.4, -3); ctx.lineTo(1.6, 0); ctx.lineTo(-2.4, 3); ctx.stroke();
-    ctx.restore();
+  for (const sp of SPURS) {
+    for (let d = sp.base + 500; d < sp.end; d += 1000) {
+      const a = posAt(d), b = posAt(d + 12);
+      const [x, y] = P(a.x, a.y), [x2, y2] = P(b.x, b.y);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(y2 - y, x2 - x));
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath(); ctx.moveTo(-2.4, -3); ctx.lineTo(1.6, 0); ctx.lineTo(-2.4, 3); ctx.stroke();
+      ctx.restore();
+    }
   }
-  // the turn point
-  {
-    const a = posAt(JUNCTION), [x, y] = P(a.x, a.y);
-    const pulse = ext.state === 'approach' ? 0.5 + 0.5 * Math.sin(game.clock * 5) : 0;
+  // the forks
+  for (const sp of SPURS) {
+    const a = posAt(sp.fork), [x, y] = P(a.x, a.y);
+    const mine = ext.spur === sp;
+    const armed = ext.armed && mine && ext.state === 'approach';
+    const pulse = mine && ext.state === 'approach' ? 0.5 + 0.5 * Math.sin(game.clock * 5) : 0;
     ctx.beginPath(); ctx.arc(x, y, (zoom ? 8 : 6.5) + pulse * 3, 0, 7);
-    ctx.fillStyle = ext.armed ? '#3ee0cf' : 'rgba(14,21,34,0.92)'; ctx.fill();
-    ctx.lineWidth = 2; ctx.strokeStyle = '#3ee0cf'; ctx.stroke();
-    ctx.fillStyle = ext.armed ? '#05211e' : '#3ee0cf'; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = armed ? sp.color : 'rgba(14,21,34,0.92)'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = sp.color; ctx.stroke();
+    ctx.fillStyle = armed ? '#05080d' : sp.color; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('+', x, y + 0.5);
-    if (zoom || ext.state !== 'far') {
-      ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(180,244,236,0.95)'; ctx.font = '700 10px system-ui, sans-serif';
-      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText('Fork: up or around', x + 12, y - 9); ctx.fillText('Fork: up or around', x + 12, y - 9);
+    if (zoom || (mine && ext.state === 'approach')) {
+      ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = '700 10px system-ui, sans-serif';
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText(`Fork: ${sp.name}`, x + 12, y - 9); ctx.fillText(`Fork: ${sp.name}`, x + 12, y - 9);
     }
   }
   ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -306,11 +313,12 @@ export function drawStrip(canvas, game) {
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   const pad = 16;
-  const spur = game.user.spur; // the strip shows the stretch you are on: the loop, or the road around
-  const base = spur ? LOOP : 0, len = spur ? SPUR_LEN : LOOP;
+  const spur = game.user.spur; // the strip shows the stretch you are on: the loop, or the detour you are riding
+  const sp = spur ? SPURS[spurAt(game.user.c)] : null;
+  const base = sp ? sp.base : 0, len = sp ? sp.len : LOOP;
   const X = (c) => pad + ((c - base) / len) * (w - pad * 2);
   drawStrip.cache ||= {};
-  const cacheKey = spur ? 'spur' : 'loop';
+  const cacheKey = sp ? sp.id : 'loop';
   if (!drawStrip.cache[cacheKey]) {
     const pts = [];
     for (let d = 0; d <= len; d += 40) pts.push([base + Math.min(d, len - 1e-6), elevation(base + Math.min(d, len - 1e-6))]);
@@ -322,7 +330,7 @@ export function drawStrip(canvas, game) {
   const Y = (el) => bottom - ((el - min) / (max - min)) * (bottom - top);
   // zone colours along the base
   for (const b of BIOMES) {
-    if ((b.start >= LOOP) !== spur) continue;
+    if (b.start < LOOP ? spur : spurAt(b.start) !== sp?.index) continue;
     ctx.fillStyle = `rgba(${b.ground.map(Math.round).join(',')},0.8)`; ctx.fillRect(X(b.start), bottom + 3, X(b.end) - X(b.start), 4);
   }
   // profile area and a grade-coloured ridge line
@@ -339,24 +347,27 @@ export function drawStrip(canvas, game) {
   }
   // km ticks
   ctx.fillStyle = 'rgba(160,176,198,0.7)'; ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center';
-  for (let km = 0; km <= 10; km += 2) ctx.fillText(String(km), X(base + km * 1000), h - 1);
-  // the fork, on the loop's strip
+  for (let km = 0; km * 1000 <= len; km += len > 12000 ? 4 : 2) ctx.fillText(String(km), X(base + km * 1000), h - 1);
+  // the forks, on the loop's strip
   if (!spur) {
-    const x = X(JUNCTION), armed = game.spurIntent;
-    ctx.strokeStyle = armed ? '#3ee0cf' : 'rgba(62,224,207,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([2, 3]);
-    ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, bottom + 2); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = armed ? '#3ee0cf' : 'rgba(62,224,207,0.9)'; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText('around ↱', x - 4, top - 6);
+    const next = game.extension().spur;
+    for (const f of SPURS) {
+      const x = X(f.fork), armed = game.spurIntent && next === f;
+      ctx.strokeStyle = armed ? f.color : `${f.color}b0`; ctx.lineWidth = 1.5; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, bottom + 2); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = armed ? f.color : `${f.color}e0`; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'right';
+      ctx.fillText(`${f.stripLabel} ↱`, x - 4, top - 6);
+    }
   }
   // landmarks
   const found = game.progress.discovered;
   for (const lm of LANDMARKS) {
-    if ((lm.d >= LOOP) !== spur) continue;
+    if (spurAt(lm.d) !== (sp ? sp.index : -1)) continue;
     glyph(ctx, lm.kind, X(lm.d), Math.max(11, Y(elevation(lm.d)) - 10), 6, !!found[lm.id]);
   }
   // riders and you
   for (const { r } of game.board().slice().reverse()) {
-    if (r.isUser || r.spur !== spur) continue;
+    if (r.isUser || r.spur !== spur || (spur && spurAt(r.c) !== sp.index)) continue;
     ctx.beginPath(); ctx.arc(X(r.c), Y(elevation(r.c)), 3, 0, 7);
     ctx.fillStyle = r.kind === 'coach' ? '#ffd400' : r.color; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#05080d'; ctx.stroke();
   }

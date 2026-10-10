@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LOOP, JUNCTION, SPUR_LEN, LANDMARKS, SEGMENTS } from '../course.js';
+import { SPURS, LANDMARKS, SEGMENTS, elevation } from '../course.js';
 import { frame, place } from './geo.js';
 import { LAKE, lakeR } from './terrain.js';
 import { makeSign, makeStone, makeRoofTiles, makeWood } from './textures.js';
@@ -413,6 +413,23 @@ function gantry(text, color, { chequer = false, bunting = true, height = 7.2, wi
   return g;
 }
 
+/** A tall two-panel blade sign on a post, readable from both directions, with a red-and-white nose marker at its foot. */
+function goreSign(title, sub, color) {
+  const g = new THREE.Group();
+  box(g, 0.14, 4.6, 0.14, 0, 2.3, 0, '#9aa0aa', { metal: 0.5 });
+  const top = makeSign(title, { w: 640, h: 160, bg: color, fg: '#ffffff', size: 0.5, round: 16 });
+  const bot = makeSign(sub, { w: 640, h: 120, bg: '#1b2330', fg: '#f2f6fc', size: 0.46, border: color, round: 14 });
+  for (const ry of [Math.PI / 2, -Math.PI / 2]) {
+    const p1 = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.85), new THREE.MeshStandardMaterial({ map: top.texture, roughness: 0.5 }));
+    p1.position.set(ry > 0 ? 0.09 : -0.09, 4.1, 0); p1.rotation.y = ry; g.add(p1);
+    const p2 = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.64), new THREE.MeshStandardMaterial({ map: bot.texture, roughness: 0.5 }));
+    p2.position.set(ry > 0 ? 0.09 : -0.09, 3.3, 0); p2.rotation.y = ry; g.add(p2);
+  }
+  // striped bollards on the nose of the island
+  for (let i = 0; i < 3; i++) cyl(g, 0.11, 0.11, 0.55 + i * 0.001, -1.4 - i * 1.1, 0.3, 0, i % 2 ? '#f4f4f2' : '#d8322d', 8);
+  return g;
+}
+
 function kmSign(km, label = `${km} km`) {
   const g = new THREE.Group();
   box(g, 0.1, 2.4, 0.1, 0, 1.2, 0, '#9aa0aa', { metal: 0.5 });
@@ -462,7 +479,7 @@ export function buildLandmarks(field) {
       group.add(line);
     }
     if (lm.kind === 'summit') {
-      placeObj(gantry('SUMMIT  1,374 m', '#2f7fd0', { height: 7.8 }), lm.d, 0, { yawFrom: 'along' });
+      placeObj(gantry(lm.label ? `${lm.label}  ${Math.round(elevation(lm.d)).toLocaleString('en-US')} m` : 'SUMMIT  1,374 m', lm.label ? '#ff7a59' : '#2f7fd0', { height: 7.8 }), lm.d, 0, { yawFrom: 'along' });
       // a snow-capped marker stone beside the road
       const st = new THREE.Group();
       add(st, new THREE.IcosahedronGeometry(1.6, 1), mat('#8d8f94', { flat: true }), 0, 1.0, 0);
@@ -513,15 +530,36 @@ export function buildLandmarks(field) {
   // kilometre markers
   for (let k = 1; k < 10; k++) placeObj(kmSign(k), k * 1000, 8.4);
   // the fork at the foot of the climb, and the road around's own kilometre markers
-  placeObj(gantry('THE FORK  ·  UP THE COL OR AROUND', '#14a89a', { bunting: false, height: 6.8, width: 7.4 }), JUNCTION - 130, 0, { yawFrom: 'along' });
-  for (let k = 1; k < SPUR_LEN / 1000; k++) placeObj(kmSign(k, `+${k} km`), LOOP + k * 1000, 8.4);
+  const forkSigns = { valley: 'THE FORK  ·  UP THE COL OR AROUND', death: 'THE FORK  ·  FINISH OR DEATH ROAD' };
+  const goreSigns = {
+    valley: ['VALLEY ROAD  ↱', `${(SPURS[0].len / 1000).toFixed(1)} km flat · skips the climb`],
+    death: ['DEATH ROAD  ↱', `${(SPURS[1].climb / 1000).toFixed(1)} km climb · 8.6%`],
+  };
+  for (const sp of SPURS) {
+    placeObj(gantry(forkSigns[sp.id], sp.color, { bunting: false, height: 6.8, width: 7.4 }), sp.fork - 130, 0, { yawFrom: 'along' });
+    for (let k = 1; k < sp.len / 1000; k++) placeObj(kmSign(k, `+${k} km`), sp.base + k * 1000, 8.4);
+    // a blade sign on the island between the two roads where they have parted, facing the riders coming up to the fork ...
+    const q = 200, a = place(sp.fork + q, 0), b = place(sp.base + q, 0), f = frame(sp.fork + q);
+    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    const sign = goreSign(goreSigns[sp.id][0], goreSigns[sp.id][1], sp.color);
+    sign.position.set(mx, field.height(mx, mz), mz);
+    sign.rotation.y = -Math.atan2(f.tz, f.tx);
+    sign.scale.setScalar(1.45); // big enough to read from the road a few seconds out
+    group.add(sign);
+    // ... and one at the rejoin, telling the detour's riders where they are heading
+    const e = place(sp.end - 170, 7.5), fe = frame(sp.end - 170);
+    const merge = goreSign('BACK ON THE LOOP', sp.id === 'death' ? 'START / FINISH ahead' : 'merge ahead', sp.color);
+    merge.position.set(e.x, field.height(e.x, e.z), e.z);
+    merge.rotation.y = -Math.atan2(fe.tz, fe.tx);
+    group.add(merge);
+  }
 
   // cheering crowds
   const crowd = buildCrowd([
     { d0: -30, d1: 30, step: 2.6, latMin: 6.4, latMax: 10.5, p: 0.95 },
     { d0: 4560, d1: 4650, step: 2.6, latMin: 6.4, latMax: 10, p: 0.95 },
     { d0: 8480, d1: 8960, step: 6.5, latMin: 6.4, latMax: 10, p: 0.7 },
-    { d0: JUNCTION - 190, d1: JUNCTION - 90, step: 5, latMin: 8.5, latMax: 13, p: 0.55 },
+    ...SPURS.map((sp) => ({ d0: sp.fork - 190, d1: sp.fork - 90, step: 5, latMin: 8.5, latMax: 13, p: 0.55 })),
     { d0: 2290, d1: 2320, step: 4, latMin: 6.6, latMax: 9, p: 0.6 },
     { d0: 7640, d1: 7660, step: 4, latMin: 6.6, latMax: 9, p: 0.6 },
   ], field);

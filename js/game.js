@@ -4,7 +4,7 @@ import {
   speedFromPower, gradeAt, elevation, START, SEGMENTS, LOOP,
   powerZone, hrZone, levelFor, clamp,
 } from './physics.js';
-import { LANDMARKS, BIOMES, JUNCTION, TOTAL, SPUR_LEN, biomeIndex } from './course.js';
+import { LANDMARKS, BIOMES, SPURS, TOTAL, biomeIndex, spurAt } from './course.js';
 import { placeOnLoop, advance, courseAt, gapBetween, roadX, sameStretch } from './route.js';
 import { workoutAt, totalDuration } from './workouts.js';
 import { RemoteRider, sanitizeState } from './net.js';
@@ -92,7 +92,8 @@ export class Game {
     this.cad = 0; this.hr = null;
     this.spurIntent = false; // you have chosen to take the extension at the next turn point
     this.packUntil = -1; // until this clock time the bunch follows you onto the extension
-    this.spurDone = 0; // times round the outside of the climb
+    this.spurDone = 0; // detours ridden to their end
+    this.spursDone = {}; // ... by detour id
     this.grade = gradeAt(this.user.c);
     this.pz = 0; this.hz = -1;
 
@@ -219,7 +220,7 @@ export class Game {
   #move(r, dx) {
     r.x += dx;
     if (r === this.coach || r.kind === 'remote' || dx <= 0) return;
-    const take = r === this.user ? () => this.spurIntent : () => this.clock <= this.packUntil;
+    const take = r === this.user ? () => this.spurIntent : () => this.clock <= this.packUntil; // the choice applies to the next fork only
     for (const ev of advance(r, dx, take)) this.#turnEvent(r, ev);
   }
 
@@ -233,35 +234,45 @@ export class Game {
 
   #turnEvent(r, ev) {
     if (!r.isUser) return;
+    const sp = SPURS[r.lastSpur];
     if (ev === 'enter') {
       this.spurIntent = false;
       this.packUntil = this.clock + PACK_FOLLOW;
       this.#sfx('segment');
     } else if (ev === 'pass') {
       this.spurIntent = false;
-      this.#toast('Up the Col', 'Staying on the loop', 'info');
+      this.#toast(sp.passText.title, sp.passText.sub, 'info');
     } else if (ev === 'exit') {
       this.spurDone++;
-      this.#toast('BACK ON THE LOOP', 'Rejoined after the descent', 'go');
+      this.spursDone[sp.id] = (this.spursDone[sp.id] ?? 0) + 1;
+      this.#toast(sp.doneText.title, sp.doneText.sub, 'go');
       this.#sfx('step');
     }
   }
 
-  /** Where you are relative to the fork, for the HUD and the controls. */
+  /**
+   * Where you are relative to the next fork (or on the detour you are riding), for the HUD and the controls. `spur` is the
+   * detour the next fork leads onto.
+   */
   extension() {
     const u = this.user;
-    if (u.spur) return { state: 'on', done: u.c - LOOP, left: TOTAL - u.c, length: SPUR_LEN, armed: false };
-    const toTurn = u.c < JUNCTION ? JUNCTION - u.c : Infinity;
-    return { state: toTurn <= TURN_RANGE ? 'approach' : 'far', toTurn, armed: this.spurIntent, length: SPUR_LEN };
+    if (u.spur) {
+      const sp = SPURS[spurAt(u.c)];
+      return { state: 'on', spur: sp, done: u.c - sp.base, left: sp.end - u.c, length: sp.len, armed: false };
+    }
+    const sp = SPURS.find((s) => s.fork > u.c) ?? null; // none left this lap: the start line is next
+    const toTurn = sp ? sp.fork - u.c : Infinity;
+    return { state: toTurn <= TURN_RANGE ? 'approach' : 'far', spur: sp, toTurn, armed: this.spurIntent, length: sp?.len ?? 0 };
   }
 
-  /** Choose (or un-choose) going around the climb; only possible once the fork is announced. Returns the new choice. */
+  /** Choose (or un-choose) the detour at the next fork; only possible once the fork is announced. Returns the new choice. */
   toggleExtension(want = !this.spurIntent) {
     const e = this.extension();
     if (e.state !== 'approach') return this.spurIntent;
     if (want !== this.spurIntent) {
       this.spurIntent = want;
-      this.#toast(want ? 'GOING AROUND' : 'Riding up', want ? 'Bear right at the fork  ·  flat road around the climb' : 'Up the Col de SpinQuest', want ? 'go' : 'info');
+      const t = want ? e.spur.armText : e.spur.disarmText;
+      this.#toast(t.title, t.sub, want ? 'go' : 'info');
       this.#sfx('step');
     }
     return this.spurIntent;
@@ -366,7 +377,7 @@ export class Game {
     for (const r of riders) {
       const phase = r.c;
       for (const s of SEGMENTS) {
-        const inside = !r.spur && phase >= s.start && phase < s.end;
+        const inside = r.spur === (s.start >= LOOP) && (!r.spur || spurAt(r.c) === spurAt(s.start)) && phase >= s.start && phase < s.end;
         const was = r.segStart[s.id] != null;
         if (inside && !was) {
           r.segStart[s.id] = this.clock;
@@ -383,7 +394,7 @@ export class Game {
       }
     }
     const phase = this.user.c;
-    const s = this.user.spur ? null : SEGMENTS.find((q) => phase >= q.start && phase < q.end);
+    const s = SEGMENTS.find((q) => this.user.spur === (q.start >= LOOP) && phase >= q.start && phase < q.end);
     this.curSeg = s
       ? { seg: s, progress: (phase - s.start) / (s.end - s.start), elapsed: this.clock - (this.user.segStart[s.id] ?? this.clock) }
       : null;
@@ -411,10 +422,10 @@ export class Game {
       this.#toast(BIOMES[bi].name.toUpperCase(), BIOMES[bi].blurb, 'zone');
     }
     for (const lm of LANDMARKS) {
-      const lmSpur = lm.d >= LOOP;
+      const lmSpur = spurAt(lm.d);
       let d = Math.abs(phase - lm.d);
-      if (lmSpur !== this.user.spur) d = Infinity; // landmarks on the road around are only reachable from it
-      else if (!lmSpur) d = Math.min(d, LOOP - d);
+      if (lmSpur !== spurAt(phase)) d = Infinity; // landmarks on a detour are only reachable from it
+      else if (lmSpur < 0) d = Math.min(d, LOOP - d);
       const near = d < 35;
       if (near && !this.nearLm.has(lm.id)) {
         this.nearLm.add(lm.id);
@@ -564,6 +575,7 @@ export class Game {
       zoneHr: this.zoneHr,
       samples: this.samples,
       extensions: this.spurDone,
+      detours: this.spursDone,
       unlocked: this.unlocked,
       discovered: this.discoveredNow,
       workout: this.workout,

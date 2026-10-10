@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TOTAL, BIOMES, LANDMARKS, TUNNEL, BRIDGE, biomeIndex } from '../course.js';
+import { LOOP, TOTAL, SPURS, BIOMES, LANDMARKS, TUNNEL, BRIDGE, biomeIndex, spurAt } from '../course.js';
 import { frame, place } from './geo.js';
 import { RIVER, LAKE, lakeR } from './terrain.js';
 import { mulberry32, makeNoise, smoothstep as sm } from './noise.js';
@@ -272,6 +272,7 @@ const ZONES = [
   { name: 'village', dens: 0.3, lat: [9, 70], sp: [['broadleaf', 5], ['bush', 4]] },
   { name: 'fields', dens: 0.35, lat: [10, 120], sp: [['broadleaf', 6], ['bush', 2], ['rock', 1]] },
   { name: 'flats', dens: 0.28, lat: [12, 160], sp: [['broadleaf', 5], ['bush', 5], ['birch', 2], ['rock', 1]] },
+  { name: 'deathroad', dens: 0.9, lat: [9, 150], sp: [['pine', 28], ['rock', 52], ['bush', 16], ['birch', 4]] },
 ];
 const GRASS = [
   { kind: 'flowers', n: 6, lat: [6.4, 30], alt: 'grass' },
@@ -282,6 +283,7 @@ const GRASS = [
   { kind: 'grass', n: 1.5, lat: [6.4, 14] },
   { kind: 'wheat', n: 11, lat: [6.4, 80] },
   { kind: 'grass', n: 1.9, lat: [6.4, 26], alt: 'flowers' },
+  { kind: 'dry', n: 0.9, lat: [6.4, 14] },
 ];
 
 export async function buildFlora(field, { density = 1, grassDensity = 1, onProgress = null } = {}) {
@@ -301,6 +303,11 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
 
   // keep clear of landmarks, the tunnel, the bridge and water
   const clear = LANDMARKS.map((lm) => { const p = place(lm.d, lm.lat); return { x: p.x, z: p.z, r: lm.kind === 'castle' ? 60 : lm.kind === 'windmill' ? 14 : lm.kind === 'lighthouse' ? 12 : lm.kind === 'cabin' ? 14 : lm.kind === 'church' ? 16 : lm.kind === 'market' ? 14 : 0 }; }).filter((c) => c.r);
+  // keep the island between each detour and the loop clear around its sign, and the sides of the road at each rejoin sign
+  for (const sp of SPURS) {
+    const a = place(sp.fork + 200, 0), b = place(sp.base + 200, 0), e = place(sp.end - 170, 7.5);
+    clear.push({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, r: 15 }, { x: e.x, z: e.z, r: 9 });
+  }
   const riverDist = (x, z) => {
     const b = RIVER.bbox;
     if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return 999;
@@ -325,7 +332,9 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
 
   // --- trees, rocks, bushes -------------------------------------------------
   const step = 3;
+  const inGap = (s) => s >= LOOP && s < SPURS[Math.max(0, spurAt(s))].base; // the unused coordinates between two detours
   for (let s = 0; s < TOTAL; s += step) {
+    if (inGap(s)) continue;
     const zi = biomeIndex(s);
     const zone = ZONES[zi];
     const total = zone.sp.reduce((a, [, w]) => a + w, 0);
@@ -371,6 +380,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
 
   // --- grass, flowers, wheat, reeds ---------------------------------------------
   for (let s = 0; s < TOTAL; s += 2.5) {
+    if (inGap(s)) continue;
     const zi = biomeIndex(s);
     const g = GRASS[zi];
     const f = frame(s);
@@ -442,7 +452,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
       push('lamp', x, z, mat(x, h, z, -face, 1));
     }
   }
-  for (const zi of [0, 3, 6, 7]) {
+  for (const zi of [0, 3, 6, 7]) { // meadow, orchard descent, fields and Valley Road get fences and hay
     const zn = BIOMES[zi];
     for (let s = zn.start; s < zn.end; s += 15) {
       if (rng() > 0.55) continue;

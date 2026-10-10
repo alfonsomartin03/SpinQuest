@@ -8,20 +8,23 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { LOOP, JUNCTION, REJOIN, SPUR_LEN, TUNNEL, curvatureAt } from '../course.js';
+import { LOOP, SPURS, TUNNEL, curvatureAt, elevation, spurAt } from '../course.js';
 import { courseAt } from '../route.js';
 import { POWER_ZONES, HR_ZONES, clamp } from '../physics.js';
 import { orbAt, ORB_SPACING } from '../game.js';
 import { frame, place, BOUNDS, LOOP_BOUNDS } from './geo.js';
 import { TerrainField, buildTerrainMesh, makeDetailTexture } from './terrain.js';
 import { buildRoad } from './road.js';
-import { buildTunnel, buildBridge } from './structures.js';
+import { buildTunnel, buildBridge, buildViaducts } from './structures.js';
 import { buildLake, buildRiver, makeWaterUniforms } from './water.js';
 import { SkySystem, buildBalloons, buildBirds } from './sky.js';
 import { buildFlora } from './flora.js';
 import { buildLandmarks, landmarkPads } from './landmarks.js';
 import { RiderModel, makeNameTag, SKINS, HAIRS } from './riders.js';
 import { OrbField, Particles, AmbientParticles, FinalShader } from './effects.js';
+
+/** Snow falling on the top of Death Road: none below 1,450 m, a steady fall above 1,600 m. */
+const smoothSnow = (alt) => Math.max(0, Math.min(1, (alt - 1450) / 150)) * 0.9;
 
 const FINE_R = 500; // metres either side of the extension that get the fine terrain mesh
 
@@ -114,6 +117,7 @@ export class Renderer {
     this.scene.add(buildRoad({ anisotropy: aniso }));
     this.scene.add(buildTunnel({ anisotropy: aniso }));
     this.scene.add(buildBridge({ anisotropy: aniso }));
+    this.scene.add(buildViaducts(this.field, { anisotropy: aniso }));
 
     await step(0.6, 'Filling the lake');
     this.water = makeWaterUniforms();
@@ -338,11 +342,18 @@ export class Renderer {
     const fovT = 58 + clamp(speed * 0.5, 0, 14) + sprint * 3;
     this.fov += (fovT - this.fov) * (1 - Math.exp(-dt * 3));
     if (Math.abs(this.camera.fov - this.fov) > 0.02) { this.camera.fov = this.fov; this.camera.updateProjectionMatrix(); }
+    if (this.debugCam) { // ?debug=1 only: look at the world from anywhere ({ at: [x, y, z], look: [x, y, z], fov })
+      const d = this.debugCam;
+      this.camera.position.set(...d.at);
+      this.camera.lookAt(...d.look);
+      if (d.fov && this.camera.fov !== d.fov) { this.camera.fov = d.fov; this.camera.updateProjectionMatrix(); }
+    }
 
     // sun, sky, fog: time of day follows the course
     const ph = user.c;
     // time of day follows the stretch of loop you are replacing while you ride around it
-    this.sky.setProgress((ph < LOOP ? ph : JUNCTION + ((ph - LOOP) / SPUR_LEN) * (REJOIN - JUNCTION)) / LOOP, um.position);
+    const sp = user.spur ? SPURS[spurAt(ph)] : null;
+    this.sky.setProgress((sp ? sp.fork + ((ph - sp.base) / sp.len) * (sp.rejoin - sp.fork) : ph) / LOOP, um.position);
     this.sky.update(t);
     const st = this.sky.state;
     const inT = ph > TUNNEL.start - 2 && ph < TUNNEL.end + 2 ? 1 : 0;
@@ -399,7 +410,7 @@ export class Renderer {
 
     // ambient particles
     const q = QUALITY[this.quality];
-    this.snow.update(t, this.camera.position, clamp((this.#snowAt(ph)) * q.ambient, 0, 1), this.h);
+    this.snow.update(t, this.camera.position, clamp((sp && sp.id === 'death' ? smoothSnow(elevation(ph)) : this.#snowAt(ph)) * q.ambient, 0, 1), this.h);
     this.dust.update(t, this.camera.position, st.gold * 0.8 * q.ambient, this.h);
 
     // post-processing uniforms

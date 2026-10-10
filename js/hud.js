@@ -3,7 +3,7 @@
 import {
   POWER_ZONES, HR_ZONES, LOOP, elevation, powerZone, levelFor, levelTitle, xpForLevel, fmtTime, clamp,
 } from './physics.js';
-import { LANDMARKS, BIOMES, CLIMBS, LOOP as LOOP_LEN, activeClimb, climbSplits, biomeIndex } from './course.js';
+import { LANDMARKS, BIOMES, CLIMBS, SPURS, LOOP as LOOP_LEN, activeClimb, climbSplits, biomeIndex, spurAt } from './course.js';
 import { drawMap, drawClimbProfile, drawStrip, gradeColor as gradeColorImport } from './hudviz.js';
 import { totalDuration } from './workouts.js';
 import { ACHIEVEMENTS } from './achievements.js';
@@ -285,7 +285,7 @@ export class Hud {
     // the next landmark on the stretch of road you are on
     let best = null;
     for (const lm of LANDMARKS) {
-      if ((lm.d >= LOOP_LEN) !== u.spur) continue;
+      if (spurAt(lm.d) !== spurAt(phase)) continue;
       const dist = u.spur ? lm.d - phase : (lm.d - phase + LOOP_LEN) % LOOP_LEN;
       if (dist > 15 && (!best || dist < best.dist)) best = { lm, dist };
     }
@@ -294,27 +294,29 @@ export class Hud {
     setText(this.el['h-zone'], `${BIOMES[bi].name} · ${Math.round(elevation(phase))} m${best ? `   ·   Next: ${found ? best.lm.name : 'unknown landmark'} in ${dTxt}` : ''}`);
   }
 
-  /** The fork at the foot of the climb: announced a kilometre out, with a button (or a double click of the Zwift Click) to go around. */
+  /** The next fork: announced a kilometre out, with a button (or a double click of the Zwift Click) to take the detour. */
   #turn(game) {
     const e = this.el;
     const x = game.extension();
     e['h-turn'].hidden = x.state === 'far';
     if (x.state === 'far') return;
     const box = e['h-turn'];
+    const sp = x.spur;
     box.classList.toggle('armed', !!x.armed);
     box.classList.toggle('on', x.state === 'on');
+    box.style.setProperty('--turn', sp.color);
     if (x.state === 'on') {
-      setText(e['h-turn-title'], 'Valley Road');
-      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go, then back on the loop after the descent`);
+      setText(e['h-turn-title'], sp.onTitle);
+      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go, ${sp.onSub}`);
       e['h-turn-btn'].hidden = true;
       e['h-turn-hint'].hidden = true;
       e['h-turn-bar'].style.width = `${(x.done / x.length) * 100}%`;
       return;
     }
     const m = Math.max(0, Math.round(x.toTurn / 10) * 10);
-    setText(e['h-turn-title'], x.armed ? `Going around · fork in ${m} m` : `Fork in ${m} m · up the Col, or around`);
-    setText(e['h-turn-sub'], x.armed ? 'You will bear right and skip the climb' : `Climb the Col de SpinQuest, or take ${(x.length / 1000).toFixed(1)} km of flat road around it`);
-    setText(e['h-turn-btn'], x.armed ? 'Ride up instead' : 'Go around');
+    setText(e['h-turn-title'], x.armed ? `${sp.armedTitle} · fork in ${m} m` : `Fork in ${m} m · ${sp.forkTitle}`);
+    setText(e['h-turn-sub'], x.armed ? sp.armedSub : sp.ask(sp));
+    setText(e['h-turn-btn'], x.armed ? sp.cancel : sp.button);
     e['h-turn-btn'].hidden = false;
     e['h-turn-hint'].hidden = false;
     e['h-turn-bar'].style.width = `${(1 - x.toTurn / 1000) * 100}%`;
@@ -323,7 +325,8 @@ export class Hud {
   /** Distance left, elevation left and gradient information while on (or about to start) a climb. */
   #climb(game) {
     const e = this.el;
-    const act = game.spurIntent ? null : activeClimb(game.user.c); // no climb panel once you have chosen to skip it
+    let act = activeClimb(game.user.c);
+    if (act && game.spurIntent && act.climb.start < LOOP_LEN) act = null; // no climb panel once you have chosen to skip it
     e['h-climb'].hidden = !act;
     if (!act) { this.vamBuf.length = 0; return; }
     const { climb, stats: st } = act;
@@ -394,7 +397,7 @@ export function showSummary(game, levelBefore, xpBefore) {
     stat(sum.maxHr ? sum.maxHr + ' bpm' : '--', 'Max HR'),
     stat(Math.round(sum.kj) + ' kJ', 'Work'),
     stat(sum.score.toLocaleString(), 'Points'),
-    ...(sum.extensions ? [stat(`${sum.extensions}×`, 'Around the climb')] : []),
+    ...SPURS.filter((sp) => sum.detours?.[sp.id]).map((sp) => stat(`${sum.detours[sp.id]}×`, sp.name)),
   ].join('');
 
   const canvas = $('s-chart');

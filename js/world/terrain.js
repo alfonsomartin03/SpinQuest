@@ -3,7 +3,7 @@
 // zone, slope and altitude, so there are no texture assets to ship.
 
 import * as THREE from 'three';
-import { LOOP, TOTAL, JUNCTION, REJOIN, SPUR_BIOME, BIOMES, BRIDGE, LAKE_SHAPE, onSpur, biomeIndex } from '../course.js';
+import { LOOP, SPURS, LOOP_BIOMES, BIOMES, BRIDGE, LAKE_SHAPE, onSpur, spurAt, biomeIndex, onViaduct } from '../course.js';
 import { frame, place, elevEx, BOUNDS } from './geo.js';
 import { makeNoise, smoothstep as sm, lerp } from './noise.js';
 
@@ -17,7 +17,8 @@ const ZONE_STYLE = [
   { relief: 0.7, ground: '#5f9a48' }, // lake
   { relief: 0.25, ground: '#7aa356' }, // village
   { relief: 0.22, ground: '#c4a653' }, // fields
-  { relief: 0.18, ground: '#a3b05a' }, // prairie flats (the extension)
+  { relief: 0.18, ground: '#a3b05a' }, // valley road
+  { relief: 2.6, ground: '#70785c' }, // death road
 ].map((z) => ({ relief: z.relief, ground: new THREE.Color(z.ground).toArray() }));
 
 const ROCK = new THREE.Color('#77726a').toArray();
@@ -31,19 +32,20 @@ const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a
 /** Zone relief and ground colour at distance s along the road, blended across zone borders. */
 function zoneAt(s) {
   const spur = onSpur(s);
+  const sp = spur ? SPURS[spurAt(s)] : null;
   const p = spur ? s : ((s % LOOP) + LOOP) % LOOP;
-  const i = spur ? SPUR_BIOME : BIOMES.findIndex((b) => p >= b.start && p < b.end);
+  const i = sp ? LOOP_BIOMES + sp.index : BIOMES.findIndex((b) => p >= b.start && p < b.end);
   const b = BIOMES[i];
   const B = 260;
   let relief = ZONE_STYLE[i].relief;
   let ground = ZONE_STYLE[i].ground;
   const toEnd = b.end - p;
   const fromStart = p - b.start;
-  const n = SPUR_BIOME; // the zones that make up the loop
+  const n = LOOP_BIOMES; // the zones that make up the loop
   let other = null;
   let w = 0;
-  if (toEnd < B) { other = ZONE_STYLE[spur ? biomeIndex(REJOIN) : (i + 1) % n]; w = 0.5 * (1 - toEnd / B); }
-  else if (fromStart < B) { other = ZONE_STYLE[spur ? biomeIndex(JUNCTION) : (i - 1 + n) % n]; w = 0.5 * (1 - fromStart / B); }
+  if (toEnd < B) { other = ZONE_STYLE[sp ? biomeIndex(sp.rejoin % LOOP) : (i + 1) % n]; w = 0.5 * (1 - toEnd / B); }
+  else if (fromStart < B) { other = ZONE_STYLE[sp ? biomeIndex(sp.fork) : (i - 1 + n) % n]; w = 0.5 * (1 - fromStart / B); }
   if (other) { relief = lerp(relief, other.relief, w); ground = mixc(ground, other.ground, w); }
   return { relief, ground, biome: i };
 }
@@ -147,22 +149,41 @@ class Grid {
 export class TerrainField {
   constructor() {
     this.noise = makeNoise(20260);
-    // road samples
-    const nm = LOOP / SAMPLE, n = TOTAL / SAMPLE; // samples on the loop, then on the extension (a closed ring of its own)
-    this.nm = nm;
+    // road samples: the loop (a closed ring), then each detour (an open road: it runs from its fork to its rejoin)
+    // A road carried over another on a viaduct is not ground: the samples under its deck are left out, which splits the
+    // detour into separate roads, and the ground there follows the road beneath.
+    const cs = [], ring = [];
+    for (let i = 0; i < LOOP / SAMPLE; i++) { cs.push(i * SAMPLE); ring.push(0); }
+    let nextRing = 1;
+    for (const sp of SPURS) {
+      const count = Math.ceil(sp.len / SAMPLE);
+      let open = false;
+      for (let i = 0; i <= count; i++) {
+        const c = sp.base + Math.min(i * SAMPLE, sp.len);
+        if (onViaduct(c, 10)) { open = false; continue; } // (the last 10 m of each span are abutment: ground, not ravine)
+        if (!open) { nextRing++; open = true; }
+        cs.push(c); ring.push(nextRing - 1);
+      }
+    }
+    this.rings = nextRing;
+    const n = cs.length;
+    this.cs = Float32Array.from(cs);
+    this.ring = Uint8Array.from(ring);
     this.nxt = new Int32Array(n); this.prv = new Int32Array(n);
+    const first = [], last = [];
+    ring.forEach((r, i) => { first[r] ??= i; last[r] = i; });
     for (let i = 0; i < n; i++) {
-      const lo = i < nm ? 0 : nm, hi = i < nm ? nm : n;
-      this.nxt[i] = i + 1 === hi ? lo : i + 1;
-      this.prv[i] = i === lo ? hi - 1 : i - 1;
+      const closed = ring[i] === 0, lo = first[ring[i]], hi = last[ring[i]];
+      this.nxt[i] = i < hi ? i + 1 : closed ? lo : i; // an open road ends at its last sample
+      this.prv[i] = i > lo ? i - 1 : closed ? hi : i;
     }
     this.sx = new Float32Array(n); this.sz = new Float32Array(n); this.sy = new Float32Array(n);
     this.relief = new Float32Array(n); this.ground = new Float32Array(n * 3);
     const f = {};
     for (let i = 0; i < n; i++) {
-      frame(i * SAMPLE, f);
+      frame(this.cs[i], f);
       this.sx[i] = f.x; this.sz[i] = f.z; this.sy[i] = f.y;
-      const z = zoneAt(i * SAMPLE);
+      const z = zoneAt(this.cs[i]);
       this.relief[i] = z.relief;
       this.ground[i * 3] = z.ground[0]; this.ground[i * 3 + 1] = z.ground[1]; this.ground[i * 3 + 2] = z.ground[2];
     }
@@ -174,6 +195,7 @@ export class TerrainField {
       if (!this.buckets.has(key)) this.buckets.set(key, []);
       this.buckets.get(key).push(i);
     }
+    this.ringBest = new Float64Array(this.rings); this.ringY = new Float64Array(this.rings);
     this.tmp = {};
     this.near = { dist: 0, s: 0, y: 0, side: 0 };
   }
@@ -191,9 +213,10 @@ export class TerrainField {
 
   #fillGrid(g) {
     const sigma2 = 110 * 110;
-    const nS = this.n / 2;
+    const nS = Math.ceil(this.n / 4);
     const sx = [], sz = [], sy = [], sr = [], sc = [];
-    for (let i = 0; i < this.n; i += 2) { sx.push(this.sx[i]); sz.push(this.sz[i]); sy.push(this.sy[i]); sr.push(this.relief[i]); sc.push(i * 3); }
+    // a sample every 40 m is plenty under a 110 m falloff
+    for (let i = 0; i < this.n; i += 4) { sx.push(this.sx[i]); sz.push(this.sz[i]); sy.push(this.sy[i]); sr.push(this.relief[i]); sc.push(i * 3); }
     for (let iz = 0; iz < g.nz; iz++) {
       const z = g.z0 + iz * g.cell;
       for (let ix = 0; ix < g.nx; ix++) {
@@ -221,7 +244,7 @@ export class TerrainField {
   nearest(x, z) {
     const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
     let best = Infinity, bs = 0, by = 0, bside = 0, bring = 0;
-    let best0 = Infinity, y0 = 0, best1 = Infinity, y1 = 0; // closest point on each of the two roads (loop, extension)
+    const ringBest = this.ringBest.fill(Infinity), ringY = this.ringY; // closest point on each road (the loop, then each stretch of each detour)
     for (let r = 1; r <= 2; r++) {
       for (let ox = -r; ox <= r; ox++) {
         for (let oz = -r; oz <= r; oz++) {
@@ -238,14 +261,11 @@ export class TerrainField {
               t = t < 0 ? 0 : t > 1 ? 1 : t;
               const px = ax + ex * t, pz = az + ez * t;
               const d2 = (x - px) * (x - px) + (z - pz) * (z - pz);
-              const ring = a < this.nm ? 0 : 1;
-              if (ring === 0 ? d2 < best0 : d2 < best1) {
-                const yy = this.sy[a] + (this.sy[b] - this.sy[a]) * t;
-                if (ring === 0) { best0 = d2; y0 = yy; } else { best1 = d2; y1 = yy; }
-              }
+              const ring = this.ring[a];
+              if (d2 < ringBest[ring]) { ringBest[ring] = d2; ringY[ring] = this.sy[a] + (this.sy[b] - this.sy[a]) * t; }
               if (d2 < best) {
                 best = d2; bring = ring;
-                bs = a * SAMPLE + t * SAMPLE;
+                bs = this.cs[a] + t * (this.cs[b] - this.cs[a]);
                 by = this.sy[a] + (this.sy[b] - this.sy[a]) * t;
                 bside = (x - px) * -ez + (z - pz) * ex; // >0 means left of travel in xz
               }
@@ -258,8 +278,7 @@ export class TerrainField {
     if (best === Infinity) return null;
     const o = this.near;
     // where the two roads overlap (they share a surface there), stay under the lower of them
-    const other = bring === 0 ? best1 : best0, oy = bring === 0 ? y1 : y0;
-    if (other < 10 * 10) by = Math.min(by, oy);
+    for (let k = 0; k < this.rings; k++) if (k !== bring && ringBest[k] < 10 * 10) by = Math.min(by, ringY[k]);
     o.dist = Math.sqrt(best); o.s = bs; o.y = by; o.side = bside;
     return o;
   }

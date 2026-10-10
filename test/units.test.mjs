@@ -65,8 +65,8 @@ test('physics: sensible speeds', () => {
 test('course loops seamlessly and has sane gradients', () => {
   assert.ok(Math.abs(elevation(0) - elevation(LOOP - 1e-6)) < 1e-3);
   for (let d = 0; d < LOOP; d += 25) assert.ok(Math.abs(gradeAt(d)) < 0.105, `grade ${gradeAt(d)} at ${d}`);
-  assert.equal(SEGMENTS.length, 4);
-  for (const s of SEGMENTS) assert.ok(s.start >= 0 && s.end <= LOOP);
+  assert.equal(SEGMENTS.length, 5);
+  for (const s of SEGMENTS) assert.ok(s.start >= 0 && (s.end <= LOOP || s.start >= LOOP), `${s.id} sits on the loop or on one detour`);
 });
 
 test('course geometry closes on itself and has landmarks in zones', () => {

@@ -1,13 +1,17 @@
-// The fork at the foot of the climb and the flat road around it: where riders are, how they get on and off it, and the controls that choose it.
+// The two forks (Valley Road at the foot of the climb, Death Road late in the lap): where riders are, how they get on and
+// off the detours, and the controls that choose them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LOOP, TOTAL, JUNCTION, REJOIN, SPUR_LEN, posAt, headingAt, elevation, climbSplits, CLIMBS, biomeIndex, BIOMES } from '../js/course.js';
+import { LOOP, SPURS, DEATH_AVG_GRADE, posAt, headingAt, elevation, climbSplits, CLIMBS, biomeIndex, BIOMES, spurAt } from '../js/course.js';
 import { placeOnLoop, advance, courseAt, roadX, gapBetween, sameStretch } from '../js/route.js';
 import { DoubleClick } from '../js/click.js';
 import { Game, TURN_RANGE } from '../js/game.js';
+import { speedFromPower, gradeAt } from '../js/physics.js';
 import { WORKOUTS } from '../js/workouts.js';
 import { buildFit, PLACES } from '../js/export.js';
 
+const [V, D] = SPURS; // Valley Road, Death Road
+const JUNCTION = V.fork, REJOIN = V.rejoin, SPUR_LEN = V.len, TOTAL = V.end;
 const rider = (x = 0) => placeOnLoop({}, x);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -21,14 +25,15 @@ test('the road around leaves the loop at the foot of the climb and rejoins it af
   assert.equal(TOTAL - LOOP, SPUR_LEN);
   assert.equal(JUNCTION, CLIMBS[0].start, 'the fork is at the base of the climb');
   assert.ok(REJOIN > CLIMBS[0].end, 'it rejoins after the summit');
-  assert.equal(biomeIndex(LOOP + 100), BIOMES.length - 1);
+  assert.equal(biomeIndex(V.base + 100), BIOMES.length - 2);
+  assert.equal(biomeIndex(D.base + 100), BIOMES.length - 1);
 });
 
 test('without going around a lap is 10 km and the rider never leaves the loop', () => {
   const r = rider(0);
   const events = [];
   for (let i = 0; i < 2500; i++) events.push(...advance(r, 10)); // 25 km
-  assert.equal(events.filter((e) => e === 'pass').length, 3);
+  assert.equal(events.filter((e) => e === 'pass').length, 5, 'two forks a lap');
   assert.equal(events.filter((e) => e === 'lap').length, 2);
   assert.equal(r.spur, false);
   assert.ok(Math.abs(r.c - 5000) < 1e-6 && r.laps === 2);
@@ -38,8 +43,8 @@ test('going around skips the climb: the lap changes length by the road around mi
   const r = rider(0);
   const seen = [];
   let travelled = 0;
-  while (r.laps < 1) { const ev = advance(r, 7, () => true); travelled += 7; seen.push(...ev.filter((e) => e !== 'lap')); }
-  assert.deepEqual(seen, ['enter', 'exit']);
+  while (r.laps < 1) { const ev = advance(r, 7, (sp) => sp === V); travelled += 7; seen.push(...ev.filter((e) => e !== 'lap')); }
+  assert.deepEqual(seen, ['enter', 'exit', 'pass']);
   const expected = LOOP - (REJOIN - JUNCTION) + SPUR_LEN;
   assert.ok(Math.abs(travelled - expected) < 7, `lap was ${travelled} m, expected ${expected}`);
   assert.equal(r.spur, false);
@@ -70,19 +75,24 @@ test('courseAt: the road ahead and behind follows your route', () => {
   advance(out, SPUR_LEN + 6, () => true);
   assert.ok(!out.spur && Math.abs(out.c - (REJOIN + 6)) < 1e-6);
   assert.ok(Math.abs(courseAt(out, -10) - (TOTAL - 4)) < 1e-6, 'behind you, still out on the road around');
+  const home = rider(D.fork - 5);
+  advance(home, 5, () => true);
+  advance(home, D.len + 4, () => true);
+  assert.ok(!home.spur && Math.abs(home.c - 4) < 1e-6 && home.laps === 1, 'Death Road comes out at the start line, a lap later');
+  assert.ok(Math.abs(courseAt(home, -10) - (D.end - 6)) < 1e-6, 'and behind you is the end of it');
 });
 
 test('road positions and gaps: the road around is placed by progress along the stretch it replaces', () => {
   const a = rider(1000), b = rider(1400), far = rider(1400);
-  advance(far, 100 + 0, () => true); // reaches the fork and turns off (1500)
+  advance(far, 100 + 0, (sp) => sp === V); // reaches the fork and turns off (1500)
   assert.ok(far.spur && Math.abs(far.c - LOOP) < 1e-9);
   assert.equal(gapBetween(a, b), 400);
   assert.equal(roadX(far), JUNCTION);
-  advance(far, SPUR_LEN / 2, () => true);
+  advance(far, SPUR_LEN / 2, () => false);
   assert.ok(Math.abs(roadX(far) - (JUNCTION + (REJOIN - JUNCTION) / 2)) < 1e-6, 'halfway round is halfway through what it replaces');
-  const other = rider(1400); advance(other, 100 + 300, () => true);
+  const other = rider(1400); advance(other, 100 + 300, (sp) => sp === V);
   assert.ok(Math.abs(gapBetween(far, other) - (other.c - far.c)) < 1e-9, 'two riders on it use real distance');
-  const f2 = rider(1400); advance(f2, 100 + 20 + 300, () => true);
+  const f2 = rider(1400); advance(f2, 100 + 20 + 300, (sp) => sp === V);
   assert.ok(sameStretch(a, b) && sameStretch(other, f2));
   assert.ok(!sameStretch(a, f2), 'not on the same road once you are 300 m out');
 });
@@ -109,6 +119,7 @@ test('game: the fork is announced 1 km out, can be chosen, and the road around i
   placeUser(g, JUNCTION - 1500);
   ride(g, 2);
   assert.equal(g.extension().state, 'far');
+  assert.equal(g.extension().spur, V, 'the next fork is Valley Road');
   assert.equal(g.toggleExtension(), false, 'cannot be chosen before it is announced');
   placeUser(g, JUNCTION - TURN_RANGE + 50);
   ride(g, 1);
@@ -134,6 +145,7 @@ test('game: the fork is announced 1 km out, can be chosen, and the road around i
   assert.ok(g.user.c >= REJOIN && g.user.c < REJOIN + 40, 'came out after the descent');
   const s = g.summary();
   assert.equal(s.extensions, 1);
+  assert.deepEqual(s.detours, { valley: 1 });
   assert.ok(s.samples.some((x) => x.c >= LOOP) && s.samples.every((x) => typeof x.c === 'number'));
 });
 
@@ -156,10 +168,11 @@ test('game: choosing nothing stays on the loop and the choice does not carry ove
   assert.equal(h.spurIntent, false, 'the choice was used up');
 });
 
-test('game: the bunch behind you follows onto the extension, the riders ahead do not, and nobody drafts across stretches', () => {
+test('game: the bunch behind you follows you onto a detour, the riders ahead do not, and the board stays sane', () => {
   const g = newGame();
   placeUser(g, JUNCTION - 300);
-  g.bots.forEach((b, i) => { placeOnLoop(b, JUNCTION - 300 + (i - 3) * 14); b.x = JUNCTION - 300 + (i - 3) * 14; });
+  const offsets = [-40, -30, -20, 250, 270, 290]; // three behind you, three well ahead and through the fork long before you
+  g.bots.forEach((b, i) => { placeOnLoop(b, JUNCTION - 300 + offsets[i]); b.x = JUNCTION - 300 + offsets[i]; });
   ride(g, 1);
   g.toggleExtension(true);
   ride(g, 90);
@@ -210,4 +223,71 @@ test('the .fit file follows the route onto the extension and the altitude stays 
   for (let m = 0; m < 3000; m += 10) { odo += 10; samples.push({ p: 200, hr: 140, cad: 90, v: 10, d: odo, c: LOOP + m }); }
   const bytes = buildFit({ samples, startedAt: Date.UTC(2026, 9, 9, 12), place: PLACES[0] });
   assert.ok(bytes.length > 500);
+});
+
+test('Death Road: a switchback climb averaging 8-9% that takes about 20 minutes at 6.5 W/kg, then a short spiral descent to the finish', () => {
+  const climb = CLIMBS.find((c) => c.id === 'death');
+  assert.equal(climb.start, D.base);
+  const len = climb.end - climb.start;
+  const gain = elevation(climb.end) - elevation(climb.start);
+  assert.ok(Math.abs(gain / len - DEATH_AVG_GRADE) < 0.002, `average grade ${(gain / len * 100).toFixed(2)}%`);
+  assert.ok(gain / len > 0.08 && gain / len < 0.09);
+  // time it with the game's own physics: a 75 kg rider at 6.5 W/kg
+  let t = 0;
+  for (let m = 0; m < len; m += 5) t += 5 / speedFromPower(6.5 * 75, gradeAt(climb.start + m), 84);
+  assert.ok(t > 18.5 * 60 && t < 21.5 * 60, `climb takes ${(t / 60).toFixed(1)} min`);
+  // the descent after the summit never gets steeper than a steady 7% and runs all the way back to the finish
+  let steepest = 0;
+  for (let m = 120; m < D.len - climb.end + D.base - 600; m += 5) steepest = Math.min(steepest, gradeAt(climb.end + 200 + m));
+  assert.ok(steepest > -0.125, `descent as steep as ${(steepest * 100).toFixed(1)}%`);
+  assert.ok(Math.abs(elevation(D.end) - elevation(0)) < 0.01, 'it finishes at the level of the start line');
+  const descent = D.len - D.climb;
+  assert.ok(descent > 6000 && descent < 8500, `the spirals keep the descent short: ${descent} m`);
+  assert.ok(((elevation(climb.end) - elevation(D.end)) / descent) > 0.08, 'steeper than the climb is gentle, because it is short');
+});
+
+test('after Valley Road the next fork is Death Road, and the one after that is the start line', () => {
+  const g = newGame();
+  placeUser(g, V.rejoin + 100);
+  ride(g, 1);
+  assert.equal(g.extension().spur, D);
+  placeUser(g, D.fork + 100);
+  ride(g, 1);
+  assert.equal(g.extension().spur, null, 'no fork left this lap');
+  assert.equal(g.extension().state, 'far');
+});
+
+test('game: Death Road is announced 1 km out, ridden to the start line, and counts as a lap', () => {
+  const g = newGame();
+  placeUser(g, D.fork - 500);
+  ride(g, 1);
+  assert.equal(g.extension().state, 'approach');
+  assert.equal(g.extension().spur, D);
+  g.toggleExtension(true);
+  const seen = [];
+  const lapStart = g.user.laps;
+  for (let i = 0; i < 20 * 60 * 90 && !seen.includes('DEATH ROAD DONE'); i++) {
+    g.update(0.05, { power: 450, cadence: 90, hr: 150 });
+    for (const e of g.drain()) if (e.type === 'toast') seen.push(e.text);
+    if (g.user.spur && seen.length === 0) seen.push('(on it)');
+  }
+  assert.ok(seen.includes('DEATH ROAD DONE'), `toasts: ${seen.join(', ')}`);
+  assert.ok(g.user.laps === lapStart + 1 && g.user.c < 100, 'came out at the start line');
+  assert.deepEqual(g.summary().detours, { death: 1 });
+  assert.ok(g.user.segTimes.death > 0, 'the Death Road climb segment was timed');
+});
+
+test('climb splits work on a detour climb too: Death Road is timed from its foot to the summit, and only when ridden', () => {
+  const climb = CLIMBS.find((c) => c.id === 'death');
+  const samples = [];
+  let odo = 0;
+  const step = (cc) => { odo += 8; samples.push({ p: 450, hr: 170, d: odo, c: cc }); };
+  for (let m = 6000; m < LOOP; m += 8) step(m); // lap 1 goes straight to the finish
+  for (let m = 0; m < D.fork; m += 8) step(m); // lap 2 rides the loop up to the fork ...
+  for (let m = 0; m < D.len; m += 8) step(D.base + m); // ... and takes Death Road
+  for (let m = 0; m < 2000; m += 8) step(m);
+  const s = climbSplits(samples, climb);
+  assert.equal(s.length, 1);
+  assert.ok(Math.abs(s[0].time - (climb.end - climb.start) / 8) < 1.5, `${s[0].time} s`); // timed from the turn-off, to within a sample
+  assert.equal(climbSplits(samples, CLIMBS[0]).length, 1, 'and the Col still counts on the lap that used it');
 });

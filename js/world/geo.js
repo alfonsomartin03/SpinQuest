@@ -2,7 +2,7 @@
 // A road frame at distance d gives position, tangent and right vectors, with the elevation exaggerated a
 // little so hills read well from the saddle.
 
-import { LOOP, TOTAL, SPUR_LEN, posAt, elevation, headingAt, onSpur } from '../course.js';
+import { LOOP, TOTAL, SPURS, posAt, elevation, headingAt, onSpur, spurAt } from '../course.js';
 
 export const VEX = 1.6; // vertical exaggeration of the road profile
 export const BASE_ALT = 1180; // altitude (m) of world y = 0
@@ -12,7 +12,7 @@ export const elevEx = (d) => (elevation(d) - BASE_ALT) * VEX;
 
 const STEP = 1; // table spacing (m)
 
-/** Road tables for one stretch: the main loop (length LOOP) or the extension (length SPUR_LEN). */
+/** Road tables for one stretch: the main loop (length LOOP) or one of the detours. */
 function table(len, base) {
   const n = len / STEP;
   const T = { n, len, x: new Float32Array(n + 1), z: new Float32Array(n + 1), y: new Float32Array(n + 1), t: new Float32Array(n + 1) };
@@ -27,14 +27,14 @@ function table(len, base) {
   return T;
 }
 const MAIN = table(LOOP, 0);
-const SPUR = table(SPUR_LEN, LOOP);
+const SPUR_TABLES = SPURS.map((sp) => table(sp.len, sp.base));
 
 const wrap = (d) => ((d % LOOP) + LOOP) % LOOP;
 
 /** Road frame at course coordinate d (see course.js; the main loop wraps). Writes into `out` if given. */
 export function frame(d, out = {}) {
   let T, p;
-  if (onSpur(d)) { T = SPUR; p = Math.min(SPUR_LEN, d - LOOP) / STEP; } else { T = MAIN; p = wrap(d) / STEP; }
+  if (onSpur(d)) { const sp = SPURS[spurAt(d)]; T = SPUR_TABLES[sp.index]; p = Math.min(sp.len, Math.max(0, d - sp.base)) / STEP; } else { T = MAIN; p = wrap(d) / STEP; }
   const i = Math.floor(p);
   const f = p - i;
   const j = i + 1 > T.n ? T.n : i + 1;
@@ -69,4 +69,4 @@ const boxOf = (tables) => {
   return { minX, maxX, minZ, maxZ };
 };
 export const LOOP_BOUNDS = boxOf([MAIN]);
-export const BOUNDS = boxOf([MAIN, SPUR]);
+export const BOUNDS = boxOf([MAIN, ...SPUR_TABLES]);

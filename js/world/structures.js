@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TUNNEL, BRIDGE } from '../course.js';
+import { TUNNEL, BRIDGE, VIADUCTS } from '../course.js';
 import { frame } from './geo.js';
 import { ribbon } from './road.js';
 import { makeWood, makeStone, makeConcrete, makeRoofTiles, makeSign } from './textures.js';
@@ -278,6 +278,72 @@ export function buildBridge({ anisotropy = 8 } = {}) {
     const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.8, 4), woodMat);
     chain.position.set(0, 5.85, z);
     local.add(chain);
+  }
+  return group;
+}
+
+// ---- viaducts ---------------------------------------------------------------------------------------------------
+// Where Death Road's spiral loops cross over their own earlier road, the upper road is carried on a concrete viaduct: a
+// deck under the road surface, parapets, and a pair of columns every few tens of metres down to the ravine floor.
+
+export function buildViaducts(field, { anisotropy = 8 } = {}) {
+  const group = new THREE.Group();
+  group.name = 'viaducts';
+  const concrete = makeConcrete(anisotropy);
+  concrete.repeat.set(3, 3);
+  const mat = new THREE.MeshStandardMaterial({ map: concrete, roughness: 0.92, color: '#d6d6d4' });
+  const darkMat = new THREE.MeshStandardMaterial({ color: '#5a5d63', roughness: 0.8 });
+  const parts = [], dark = [];
+  const apply = (g, m) => { g.applyMatrix4(m); return g; };
+  const COLUMN_EVERY = 28;
+  for (const v of VIADUCTS) {
+    // deck slabs and parapets follow the road's slope
+    for (let d = v.c0; d < v.c1; d += 4) {
+      const m = roadBasis(d + 2);
+      parts.push(apply(boxGeo(12.8, 1.5, 4.3, 0, -0.77, 0), m));
+      for (const side of [-1, 1]) {
+        parts.push(apply(boxGeo(0.5, 1.15, 4.3, side * 6.15, 0.56, 0), m)); // parapet wall
+        dark.push(apply(boxGeo(0.62, 0.14, 4.3, side * 6.15, 1.2, 0), m)); // cap
+      }
+    }
+    // a deeper girder under the middle of the span
+    for (let d = v.c0 + 6; d < v.c1 - 6; d += 4) {
+      const m = roadBasis(d + 2);
+      const t = Math.abs((d + 2 - v.centre) / ((v.c1 - v.c0) / 2));
+      parts.push(apply(boxGeo(8.4, 1.0 + 1.6 * (1 - t * t), 4.3, 0, -1.5 - 0.8 * (1 - t * t), 0), m));
+    }
+    // columns down to the ravine floor, and abutments at both ends
+    const f = {};
+    for (let d = v.c0 + 12; d < v.c1 - 6; d += COLUMN_EVERY) {
+      frame(d, f);
+      const m = roadBasis(d, { pitch: false });
+      for (const side of [-1, 1]) {
+        const x = f.x + f.rx * side * 3.4, z = f.z + f.rz * side * 3.4;
+        const ground = field.height(x, z);
+        const top = f.y - 1.4;
+        const h = top - (ground - 2.5);
+        if (h < 3) continue;
+        parts.push(apply(boxGeo(2.1, h, 2.5, side * 3.4, -1.4 - h / 2, 0), m));
+        parts.push(apply(boxGeo(3.2, 0.9, 3.6, side * 3.4, -1.4 - 0.45, 0), m)); // capital
+      }
+    }
+    for (const end of [v.c0, v.c1]) {
+      const m = roadBasis(end, { pitch: false });
+      frame(end, f);
+      const ground = field.height(f.x, f.z);
+      const h = Math.max(3, f.y - 1.4 - (ground - 2.5));
+      parts.push(apply(boxGeo(12.4, h, 3.2, 0, -1.4 - h / 2, end === v.c0 ? 1.3 : -1.3), m));
+    }
+  }
+  if (parts.length) {
+    const mesh = new THREE.Mesh(mergeGeometries(parts), mat);
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+  if (dark.length) {
+    const mesh = new THREE.Mesh(mergeGeometries(dark), darkMat);
+    mesh.castShadow = true;
+    group.add(mesh);
   }
   return group;
 }

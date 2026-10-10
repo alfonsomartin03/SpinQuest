@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LOOP, TOTAL, SEGMENTS, TUNNEL, BRIDGE, curvatureAt } from '../course.js';
+import { LOOP, SPURS, SEGMENTS, TUNNEL, BRIDGE, curvatureAt, elevation } from '../course.js';
 import { frame } from './geo.js';
 import { makeAsphalt, makeChevron } from './textures.js';
 
@@ -88,12 +88,17 @@ export function buildRoad({ anisotropy = 8 } = {}) {
     m.receiveShadow = true;
     group.add(m);
   }
-  // the extension: where it shares the road with the loop at the turn point its surface wins, so the two never flicker
+  // the detours: where one shares the road with the loop at its fork or rejoin, the loop's surface wins, so there is one set
+  // of lane markings there and the detour's emerges from underneath as the roads part
   const spurMat = mat.clone();
-  spurMat.polygonOffsetFactor = spurMat.polygonOffsetUnits = -4;
-  const spur = new THREE.Mesh(ribbon(LOOP, TOTAL, { y: 0.02 }), spurMat);
-  spur.receiveShadow = true;
-  group.add(spur);
+  spurMat.polygonOffsetFactor = spurMat.polygonOffsetUnits = -1;
+  for (const sp of SPURS) {
+    const spur = new THREE.Mesh(ribbon(sp.base, sp.end, { y: 0.02 }), spurMat);
+    spur.receiveShadow = true;
+    group.add(spur);
+  }
+  // every stretch of road that gets posts and chevrons: the loop, then each detour
+  const spans = [[0, LOOP], ...SPURS.map((sp) => [sp.base, sp.end])];
 
   // painted segment bands along both shoulders
   for (const s of SEGMENTS) {
@@ -110,11 +115,11 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   const postMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
   const polesGeo = mergeGeometries([box(0.09, 2.3, 0.09, 0, 1.15, 0, '#f4f4f2'), box(0.095, 0.5, 0.095, 0, 2.05, 0, '#d8322d'), box(0.1, 0.12, 0.1, 0, 1.35, 0, '#d8322d')]);
   const posts = [], poles = [];
-  for (let d = 12; d < TOTAL; d += 24) {
+  for (const [from, to] of spans) for (let d = from + 12; d < to; d += 24) {
     const inTunnel = d > TUNNEL.start - 12 && d < TUNNEL.end + 12;
     const onBridge = Math.abs(d - BRIDGE.x) < 20;
     if (inTunnel || onBridge) continue;
-    const alpine = d > 3600 && d < 5400;
+    const alpine = (d > 3600 && d < 5400) || (d >= LOOP && elevation(d) > 1450); // snow poles on the pass and the top of Death Road
     for (const side of [-1, 1]) {
       if (alpine) poles.push(roadMatrix(d, side * 6.5, 0));
       else posts.push(roadMatrix(d, side * 6.2, 0));
@@ -132,7 +137,7 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   const stickGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.7, 6);
   stickGeo.translate(0, 0.85, 0);
   const boards = [], sticks = [];
-  for (let d = 20; d < TOTAL; d += 13) {
+  for (const [from, to] of spans) for (let d = from + 20; d < to; d += 13) {
     if ((d > TUNNEL.start - 40 && d < TUNNEL.end + 40) || Math.abs(d - BRIDGE.x) < 40) continue;
     const k = curvatureAt(d);
     if (Math.abs(k) < 0.0042) continue;
