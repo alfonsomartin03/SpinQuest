@@ -235,7 +235,7 @@ async function connectDevice(kind, opts = {}) {
   card.querySelector('[data-all]').hidden = true;
   try {
     const emit = kind === 'click' ? onClickButton : (f) => hub.push(f);
-    const link = await { trainer: connectTrainer, hr: connectHeartRate, click: connectClick }[kind](emit, ui, { all: opts.all ?? $('show-all').checked, device: opts.device });
+    const link = await { trainer: connectTrainer, hr: connectHeartRate, click: connectClick }[kind](emit, ui, { all: opts.all ?? $('show-all').checked, device: opts.device, onRaw: kind === 'click' ? onClickFrame : undefined, onLog: kind === 'click' ? logClick : undefined });
     links[kind] = link;
     known[kind] = { id: link.device.id, name: link.name };
     store.set('spinquest.devices', known);
@@ -304,15 +304,49 @@ function shiftGear(dir) {
 // point is in sight. The first press has already changed gear by then, so that shift is handed back: a double click
 // leaves your gear alone.
 const clicks = new DoubleClick();
+
+/** A line under the Click's status saying what it last did, so you can tell it is talking even when no gear changes. */
+function noteClick(text) {
+  const status = $('dev-click').querySelector('[data-status]');
+  let note = $('dev-click').querySelector('[data-note]');
+  if (!note) { note = document.createElement('small'); note.dataset.note = ''; status.after(note); }
+  note.textContent = text;
+}
+/** The Click card keeps a short log of what the Click is doing (also in the console), visible whether or not gears are on. */
+const clickLog = [];
+function logClick(text) {
+  console.debug('Zwift Click:', text);
+  clickLog.push(text);
+  if (clickLog.length > 22) clickLog.shift();
+  const card = $('dev-click');
+  let pre = card.querySelector('[data-log]');
+  if (!pre) { pre = document.createElement('pre'); pre.dataset.log = ''; pre.className = 'click-log'; card.querySelector('[data-connect]').before(pre); }
+  pre.textContent = clickLog.join('\n');
+}
+function onClickFrame(hex) { console.debug('Zwift Click frame (not a button press we know):', hex); noteClick(`Click sent something unfamiliar: ${hex}`); }
+let lastWhy = -9999;
+/** Why a press did nothing, once in a while, so the rider isn't left guessing. */
+function explainNoGears() {
+  if (mode !== 'ride' || performance.now() - lastWhy < 6000) return;
+  lastWhy = performance.now();
+  const why = useSim ? 'Gears need a connected, controllable trainer. You are on the simulator.'
+    : profile.control !== 'gears' ? 'Gears only work in "Cadence control" mode (see the menu).'
+      : 'The trainer is not under SpinQuest control, so there are no virtual gears.';
+  toast({ text: 'Click pressed', sub: why, kind: 'combo' });
+}
+
 function onClickButton(dir) {
   const step = profile.clickSwap ? -dir : dir;
+  noteClick(`Last press: ${step > 0 ? 'harder (+)' : 'easier (−)'}${ctlActive ? '' : ' · no gears this ride'}`);
   const res = clicks.press(performance.now(), mode === 'ride' && game?.extension().state === 'approach');
   if (res.double) {
     if (res.undo) shiftGear(-res.undo);
     game.toggleExtension();
     return;
   }
-  clicks.record(shiftGear(step) ? step : 0);
+  const shifted = shiftGear(step);
+  if (!shifted && !(ctlActive && gears && profile.control === 'gears')) explainNoGears();
+  clicks.record(shifted ? step : 0);
 }
 $('g-up').addEventListener('click', () => shiftGear(+1));
 $('g-down').addEventListener('click', () => shiftGear(-1));

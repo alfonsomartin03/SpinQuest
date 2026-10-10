@@ -12,6 +12,8 @@ export const UUID = {
   FTMS_FEATURE: 0x2acc,
 };
 
+import { ZapSession, clickButtonsFrom } from './zwiftcrypto.js';
+
 // Zwift Click (the handlebar shifter): a custom Zwift service. Writing "RideOn" to the sync-rx characteristic
 // starts it sending button frames. Protocol per the community reverse engineering (qdomyos-zwift's zwift_play).
 export const ZWIFT = {
@@ -82,7 +84,7 @@ export function parseHeartRate(dv) {
  * `state` remembers what was held so a held button fires once.
  */
 export function parseClickButtons(dv, state = {}) {
-  if (dv.byteLength !== 5 || dv.getUint8(0) !== 0x37) return [];
+  if (dv.byteLength < 5 || dv.getUint8(0) !== 0x37) return [];
   const plus = dv.getUint8(2) === 0;
   const minus = dv.getUint8(4) === 0;
   const out = [];
@@ -378,18 +380,86 @@ export async function connectHeartRate(emit, onStatus, { all = false, device = n
   return link;
 }
 
-/** Connect a Zwift Click. `onShift(+1 | -1)` fires on each press (+1 = right button, harder). */
-export async function connectClick(onShift, onStatus, { all = false, device = null } = {}) {
+const hex = (dv) => [...new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength)].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+
+/**
+ * Connect a Zwift Click. `onShift(+1 | -1)` fires on each press (+1 = right button, harder). `onLog(text)` narrates the
+ * connection and every frame the Click sends (as hex), so a Click that connects but does nothing can be diagnosed.
+ *
+ * Two kinds of Click: the original sends its buttons as plain bytes after a "RideOn" greeting; the newer one answers only
+ * an encrypted handshake (see zwiftcrypto.js) and sends the same button message encrypted. Both are handled here: we open
+ * with the encrypted handshake, and fall back to the plain greeting if nothing answers.
+ */
+export async function connectClick(onShift, onStatus, { all = false, device = null, onRaw = null, onLog = () => {} } = {}) {
   if (device) await awaken(device);
   device ||= await request('click', all);
+  onLog(`chose ${device.name || 'a device'}`);
   const link = new Link(device, async (server) => {
-    const svc = await server.getPrimaryService(ZWIFT.SERVICE);
-    const state = {};
-    const handle = (dv) => { for (const b of parseClickButtons(dv, state)) onShift(b === 'plus' ? 1 : -1); };
-    await notify(svc, ZWIFT.ASYNC, handle);
-    try { await notify(svc, ZWIFT.SYNC_TX, handle); } catch { /* optional */ }
+    onLog('connected, looking for the Zwift service');
+    const svc = await server.getPrimaryService(ZWIFT.SERVICE).catch((err) => { onLog(`no Zwift service on it (${err.name}). Is this the Click?`); throw err; });
+    const held = {}; // which buttons are down, so a held button fires once
+    const press = (plus, minus) => {
+      if (plus && !held.plus) onShift(1);
+      if (minus && !held.minus) onShift(-1);
+      held.plus = plus; held.minus = minus;
+    };
+    const session = new ZapSession();
+    let frames = 0;
+    const handle = (via) => async (dv) => {
+      frames++;
+      const bytes = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
+      onLog(`${via}: ${hex(dv)}`);
+      try {
+        if (ZapSession.isReply(bytes)) {
+          await session.accept(bytes);
+          onLog('encrypted link is up: now press a button');
+        } else if (bytes.length >= 6 && bytes.slice(0, 6).every((b, i) => b === ZWIFT.RIDE_ON[i])) {
+          onLog('it answered the plain greeting');
+        } else if (session.ready && bytes.length > 8) {
+          const plain = await session.decrypt(bytes);
+          const buttons = clickButtonsFrom(plain);
+          if (buttons) press(buttons.plus, buttons.minus);
+          else onLog(`  (message type ${plain[0].toString(16)}, not a button)`);
+        } else {
+          const hits = parseClickButtons(dv, held.plain ??= {});
+          for (const b of hits) onShift(b === 'plus' ? 1 : -1);
+          if (!hits.length) onRaw?.(hex(dv));
+        }
+      } catch (err) { onLog(`  could not read it: ${err.message}`); }
+    };
+    // List what the Click offers, then listen on everything that can notify, so nothing it says is missed.
+    const chars = await svc.getCharacteristics().catch(() => []);
+    const props = (c) => Object.entries({ read: c.properties.read, write: c.properties.write, writeNoResp: c.properties.writeWithoutResponse, notify: c.properties.notify, indicate: c.properties.indicate }).filter(([, v]) => v).map(([k]) => k).join('+');
+    chars.forEach((c) => onLog(`has ${c.uuid.slice(0, 8)}: ${props(c) || 'no properties'}`));
+    const names = { [ZWIFT.ASYNC]: 'button', [ZWIFT.SYNC_TX]: 'reply' };
+    for (const c of chars) {
+      if (!(c.properties.notify || c.properties.indicate)) continue;
+      const via = names[c.uuid] ?? `char ${c.uuid.slice(0, 8)}`;
+      c.addEventListener('characteristicvaluechanged', (e) => handle(via)(e.target.value));
+      try { await c.startNotifications(); onLog(`listening on ${via}`); } catch (err) { onLog(`could not listen on ${via}: ${err.message}`); }
+    }
     const rx = await svc.getCharacteristic(ZWIFT.SYNC_RX);
-    await (rx.writeValueWithoutResponse ? rx.writeValueWithoutResponse(ZWIFT.RIDE_ON) : rx.writeValue(ZWIFT.RIDE_ON));
+    const write = async (bytes, how) => {
+      if (how === 'response') return (rx.writeValueWithResponse ?? rx.writeValue).call(rx, bytes);
+      return (rx.writeValueWithoutResponse ?? rx.writeValue).call(rx, bytes);
+    };
+    const waitFor = async (ms, until) => { const end = performance.now() + ms; while (performance.now() < end && !until()) await new Promise((r) => setTimeout(r, 100)); };
+    // 1. the encrypted handshake (a long write, so with a response)
+    try {
+      await write(await session.start(), 'response');
+      onLog('sent the encrypted handshake');
+      await waitFor(2500, () => session.ready);
+    } catch (err) { onLog(`encrypted handshake failed: ${err.message}`); }
+    // 2. otherwise the plain greeting, the way the original Click is started
+    if (!session.ready) {
+      for (const how of ['without response', 'response']) {
+        try { await write(ZWIFT.RIDE_ON, how === 'response' ? 'response' : 'none'); onLog(`sent RideOn (${how})`); } catch (err) { onLog(`RideOn ${how} failed: ${err.message}`); continue; }
+        await waitFor(1500, () => frames > 0);
+        if (frames) break;
+      }
+    }
+    onLog(session.ready ? 'ready' : frames ? 'now press a button' : 'it has not answered. Press a button on the Click to see if it sends anything.');
+    setTimeout(() => { if (!frames && !link.closed) onLog('still nothing heard. Is another device (Zwift, the Companion app, a phone) connected to the Click? Only one can be.'); }, 8000);
   }, onStatus);
   await link.open();
   return link;
