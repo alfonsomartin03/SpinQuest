@@ -8,7 +8,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { LOOP, JUNCTION, TUNNEL, curvatureAt } from '../course.js';
+import { LOOP, JUNCTION, REJOIN, SPUR_LEN, TUNNEL, curvatureAt } from '../course.js';
 import { courseAt } from '../route.js';
 import { POWER_ZONES, HR_ZONES, clamp } from '../physics.js';
 import { orbAt, ORB_SPACING } from '../game.js';
@@ -340,8 +340,9 @@ export class Renderer {
     if (Math.abs(this.camera.fov - this.fov) > 0.02) { this.camera.fov = this.fov; this.camera.updateProjectionMatrix(); }
 
     // sun, sky, fog: time of day follows the course
-    const ph = user.c; // on the extension the light stays where it was at the turn point
-    this.sky.setProgress(Math.min(ph, JUNCTION) / LOOP, um.position);
+    const ph = user.c;
+    // time of day follows the stretch of loop you are replacing while you ride around it
+    this.sky.setProgress((ph < LOOP ? ph : JUNCTION + ((ph - LOOP) / SPUR_LEN) * (REJOIN - JUNCTION)) / LOOP, um.position);
     this.sky.update(t);
     const st = this.sky.state;
     const inT = ph > TUNNEL.start - 2 && ph < TUNNEL.end + 2 ? 1 : 0;

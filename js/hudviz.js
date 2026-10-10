@@ -84,7 +84,7 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   const pad = 46;
-  const B = SPUR_MAP; // the whole course, loop and extension
+  const B = SPUR_MAP; // the whole course, loop and road around
   const fit = Math.min((w - pad * 2) / (B.maxX - B.minX), (h - pad * 2) / (B.maxY - B.minY));
   const me = posAt(game.user.c);
   const s = zoom ? fit * 3.4 : fit;
@@ -128,7 +128,7 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     traceRoute(ctx, P, sg.start, sg.end);
     ctx.strokeStyle = sg.color; ctx.globalAlpha = 0.5; ctx.lineWidth = wt(12); ctx.stroke(); ctx.globalAlpha = 1;
   }
-  // the extension: a dashed route off the turn point and back to it
+  // the road around the climb: a dashed route off the fork and back onto the loop
   const ext = game.extension();
   traceRoute(ctx, P, LOOP, TOTAL);
   ctx.strokeStyle = '#03060b'; ctx.lineWidth = wt(8.5); ctx.stroke();
@@ -176,7 +176,7 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     ctx.fillText('+', x, y + 0.5);
     if (zoom || ext.state !== 'far') {
       ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(180,244,236,0.95)'; ctx.font = '700 10px system-ui, sans-serif';
-      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText('Turn point  +10 km', x + 12, y - 9); ctx.fillText('Turn point  +10 km', x + 12, y - 9);
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText('Fork: up or around', x + 12, y - 9); ctx.fillText('Fork: up or around', x + 12, y - 9);
     }
   }
   ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -306,7 +306,7 @@ export function drawStrip(canvas, game) {
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   const pad = 16;
-  const spur = game.user.spur; // the strip shows the stretch you are on: the loop, or the extension
+  const spur = game.user.spur; // the strip shows the stretch you are on: the loop, or the road around
   const base = spur ? LOOP : 0, len = spur ? SPUR_LEN : LOOP;
   const X = (c) => pad + ((c - base) / len) * (w - pad * 2);
   drawStrip.cache ||= {};
@@ -340,13 +340,13 @@ export function drawStrip(canvas, game) {
   // km ticks
   ctx.fillStyle = 'rgba(160,176,198,0.7)'; ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center';
   for (let km = 0; km <= 10; km += 2) ctx.fillText(String(km), X(base + km * 1000), h - 1);
-  // the turn point, on the loop's strip
+  // the fork, on the loop's strip
   if (!spur) {
     const x = X(JUNCTION), armed = game.spurIntent;
     ctx.strokeStyle = armed ? '#3ee0cf' : 'rgba(62,224,207,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([2, 3]);
     ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, bottom + 2); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = armed ? '#3ee0cf' : 'rgba(62,224,207,0.9)'; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText('+10 km ↱', x - 4, top - 6);
+    ctx.fillText('around ↱', x - 4, top - 6);
   }
   // landmarks
   const found = game.progress.discovered;

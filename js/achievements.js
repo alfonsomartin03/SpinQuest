@@ -18,5 +18,5 @@ export const ACHIEVEMENTS = [
   { id: 'twenty', name: 'Twenty Club', desc: 'Ride 20 km in one go', test: (g) => g.distance >= 20000 },
   { id: 'summit', name: 'Summit Seeker', desc: 'Reach the top of the pass', test: (g) => !!g.progress.discovered.summit },
   { id: 'explorer', name: 'Explorer', desc: 'Discover every landmark', test: (g) => Object.keys(g.progress.discovered).length >= LANDMARKS.length },
-  { id: 'extra-mile', name: 'Extra Mile', desc: 'Ride the 10 km flat extension', test: (g) => g.spurDone >= 1 },
+  { id: 'extra-mile', name: 'Long Way Round', desc: 'Ride the flat road around the climb', test: (g) => g.spurDone >= 1 },
 ];

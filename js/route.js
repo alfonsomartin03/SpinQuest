@@ -1,12 +1,12 @@
-// Where a rider is on the course. The main loop has one turn point (JUNCTION); a rider who takes it rides the 10 km
-// extension and comes back out at the same spot, so a lap becomes 20 km. Every rider carries
+// Where a rider is on the course. The main loop forks at the foot of the climb (JUNCTION): a rider who takes the road
+// around the outside rides it and comes back onto the loop after the descent (REJOIN), skipping the climb. Every rider carries
 //   c      the course coordinate (see course.js): [0, LOOP) on the loop, [LOOP, TOTAL] on the extension
 //   spur   true while on the extension
 //   laps   how many times they have crossed the start line (can be -1 for riders who start behind it)
 //   since  metres ridden since the last turn-point event, and `last` what that event was ('enter' | 'exit' | 'pass')
 // `x` (the odometer) keeps counting every metre ridden; `c` is where those metres actually are.
 
-import { LOOP, TOTAL, JUNCTION } from './course.js';
+import { LOOP, TOTAL, JUNCTION, REJOIN, SPUR_LEN } from './course.js';
 
 const wrap = (d) => ((d % LOOP) + LOOP) % LOOP;
 
@@ -22,7 +22,7 @@ export function placeOnLoop(r, x) {
 
 /**
  * Move a rider dx >= 0 metres along the road. `take()` is asked each time they reach the turn point and says whether to
- * ride the extension. Returns the events on the way: 'enter' | 'exit' | 'pass' (turn point) and 'lap' (start line).
+ * go around. Returns the events on the way: 'enter' | 'exit' | 'pass' (turn point) and 'lap' (start line).
  */
 export function advance(r, dx, take = () => false) {
   const events = [];
@@ -32,7 +32,7 @@ export function advance(r, dx, take = () => false) {
     if (r.spur) {
       const toEnd = TOTAL - r.c;
       if (left < toEnd) { r.c += left; left = 0; } else {
-        left -= toEnd; r.c = JUNCTION; r.spur = false;
+        left -= toEnd; r.c = REJOIN; r.spur = false;
         events.push('exit'); r.last = 'exit'; r.since = left;
       }
     } else if (r.c < JUNCTION) {
@@ -71,19 +71,22 @@ export function courseAt(r, delta, intent = false) {
     return r.spur ? Math.max(LOOP, c) : wrap(c);
   }
   const rem = back - r.since;
-  return r.last === 'exit' ? Math.max(LOOP, TOTAL - rem) : wrap(JUNCTION - rem);
+  return r.last === 'exit' ? Math.max(LOOP, TOTAL - rem) : wrap(JUNCTION - rem); // before the fork you were on the loop, before the rejoin on the road around
 }
 
-/** A comparable position along the road: laps ridden, with the extension counted as sitting at the turn point. */
-export const roadX = (r) => r.laps * LOOP + (r.spur ? JUNCTION : r.c);
+/**
+ * A comparable position along the loop: laps ridden, and for a rider on the road around, how far along the stretch of
+ * loop it replaces (the fork to the rejoin) they are, by progress.
+ */
+export const roadX = (r) => r.laps * LOOP + (r.spur ? JUNCTION + ((r.c - LOOP) / SPUR_LEN) * (REJOIN - JUNCTION) : r.c);
 
 /**
- * Metres of road from `a` to `b` (+ = b is ahead). Riders on the extension are counted at the turn point, except against
- * each other, so the bunch and a rider out on the extension never read as being on top of one another.
+ * Metres of road from `a` to `b` (+ = b is ahead). A rider on the road around is placed by progress along the stretch of
+ * loop it replaces, except against another rider on it, where the real distance counts.
  */
 export const gapBetween = (a, b) => (a.spur && b.spur ? b.c - a.c : roadX(b) - roadX(a));
 
-/** Whether two riders are on the same stretch of road (the loop, or the extension), counting the turn point as both. */
+/** Whether two riders are on the same stretch of road (the loop, or the road around), counting the fork and the rejoin as both. */
 export function sameStretch(a, b) {
   if (a.spur === b.spur) return true;
   const out = a.spur ? a : b;

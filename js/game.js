@@ -24,10 +24,9 @@ export const IDLE_COAST = 1; // seconds of free-wheeling allowed
 export const IDLE_PAUSE = 3; // seconds without pedalling before the ride pauses
 const BRAKE = 2.4; // m/s^2
 
-/** The turn point: it is announced this far ahead, and the extension can be chosen from then until you reach it. */
+/** The fork at the foot of the climb: it is announced this far ahead, and going around can be chosen from then until you reach it. */
 export const TURN_RANGE = 1000; // metres
-const PACK_FOLLOW = 25; // seconds after you take the extension during which the bunch behind you follows
-export const EXTENSION_BONUS = 150; // points for riding all of it
+const PACK_FOLLOW = 25; // seconds after you go around during which the bunch behind you follows
 
 export const ORB_SPACING = 9;
 const ORB_GROUP = 6;
@@ -53,7 +52,7 @@ const mkRider = (name, color, x, extra = {}) => placeOnLoop({
   crank: Math.random() * 6, wheel: 0, drag: 1, drafting: false, segStart: {}, segTimes: {}, ...extra,
 }, x);
 
-/** Orders riders along the road; riders out on the extension sort among themselves (just behind the turn point). */
+/** Orders riders along the road; riders out on the road around sort among themselves, just behind the fork. */
 const routeKey = (r) => roadX(r) + (r.spur ? (r.c - TOTAL) * 1e-4 : 0);
 
 const BOT_WEIGHTS = [58, 70, 62, 79, 68, 84];
@@ -93,7 +92,7 @@ export class Game {
     this.cad = 0; this.hr = null;
     this.spurIntent = false; // you have chosen to take the extension at the next turn point
     this.packUntil = -1; // until this clock time the bunch follows you onto the extension
-    this.spurDone = 0; // extensions ridden to the end
+    this.spurDone = 0; // times round the outside of the climb
     this.grade = gradeAt(this.user.c);
     this.pz = 0; this.hz = -1;
 
@@ -237,20 +236,18 @@ export class Game {
     if (ev === 'enter') {
       this.spurIntent = false;
       this.packUntil = this.clock + PACK_FOLLOW;
-      this.#toast('PRAIRIE FLATS', '10 km of flat road ahead', 'zone');
       this.#sfx('segment');
     } else if (ev === 'pass') {
       this.spurIntent = false;
-      this.#toast('Staying on the loop', 'Turn point passed', 'info');
+      this.#toast('Up the Col', 'Staying on the loop', 'info');
     } else if (ev === 'exit') {
       this.spurDone++;
-      this.#award(EXTENSION_BONUS);
-      this.#toast('EXTENSION COMPLETE', `Back on the loop  ·  +${EXTENSION_BONUS * this.mult}`, 'win');
-      this.#sfx('win');
+      this.#toast('BACK ON THE LOOP', 'Rejoined after the descent', 'go');
+      this.#sfx('step');
     }
   }
 
-  /** Where you are relative to the turn point, for the HUD and the controls. */
+  /** Where you are relative to the fork, for the HUD and the controls. */
   extension() {
     const u = this.user;
     if (u.spur) return { state: 'on', done: u.c - LOOP, left: TOTAL - u.c, length: SPUR_LEN, armed: false };
@@ -258,13 +255,13 @@ export class Game {
     return { state: toTurn <= TURN_RANGE ? 'approach' : 'far', toTurn, armed: this.spurIntent, length: SPUR_LEN };
   }
 
-  /** Choose (or un-choose) the extension; only possible once the turn point is announced. Returns the new choice. */
+  /** Choose (or un-choose) going around the climb; only possible once the fork is announced. Returns the new choice. */
   toggleExtension(want = !this.spurIntent) {
     const e = this.extension();
     if (e.state !== 'approach') return this.spurIntent;
     if (want !== this.spurIntent) {
       this.spurIntent = want;
-      this.#toast(want ? 'EXTENSION ON' : 'Extension off', want ? 'Turn right at the turn point  ·  +10 km flat' : 'Staying on the loop', want ? 'go' : 'info');
+      this.#toast(want ? 'GOING AROUND' : 'Riding up', want ? 'Bear right at the fork  ·  flat road around the climb' : 'Up the Col de SpinQuest', want ? 'go' : 'info');
       this.#sfx('step');
     }
     return this.spurIntent;
@@ -416,7 +413,7 @@ export class Game {
     for (const lm of LANDMARKS) {
       const lmSpur = lm.d >= LOOP;
       let d = Math.abs(phase - lm.d);
-      if (lmSpur !== this.user.spur) d = Infinity; // landmarks on the extension are only reachable from it
+      if (lmSpur !== this.user.spur) d = Infinity; // landmarks on the road around are only reachable from it
       else if (!lmSpur) d = Math.min(d, LOOP - d);
       const near = d < 35;
       if (near && !this.nearLm.has(lm.id)) {

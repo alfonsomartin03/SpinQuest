@@ -10,13 +10,13 @@
 //    can't push NaNs or teleport. A real server should also check plausibility (speed vs power) before
 //    relaying.
 
-import { speedFromPower, gradeAt, LOOP } from './physics.js';
+import { speedFromPower, gradeAt, LOOP, V_MAX } from './physics.js';
 
 export const PROTOCOL_VERSION = 1;
 export const SEND_HZ = 10;
 export const INTERP_DELAY = 0.15; // seconds behind real time, enough to span one or two packets
 const MAX_EXTRAPOLATE = 0.3; // seconds
-const MAX_SPEED = 30; // m/s: anything faster in a state is rejected as bogus
+const MAX_SPEED = V_MAX + 1; // m/s: anything faster in a state is rejected as bogus (the physics tops out at V_MAX)
 
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));

@@ -3,7 +3,7 @@
 // zone, slope and altitude, so there are no texture assets to ship.
 
 import * as THREE from 'three';
-import { LOOP, TOTAL, SPUR_BIOME, BIOMES, BRIDGE, LAKE_SHAPE, onSpur } from '../course.js';
+import { LOOP, TOTAL, JUNCTION, REJOIN, SPUR_BIOME, BIOMES, BRIDGE, LAKE_SHAPE, onSpur, biomeIndex } from '../course.js';
 import { frame, place, elevEx, BOUNDS } from './geo.js';
 import { makeNoise, smoothstep as sm, lerp } from './noise.js';
 
@@ -42,8 +42,8 @@ function zoneAt(s) {
   const n = SPUR_BIOME; // the zones that make up the loop
   let other = null;
   let w = 0;
-  if (toEnd < B) { other = ZONE_STYLE[spur ? 6 : (i + 1) % n]; w = 0.5 * (1 - toEnd / B); }
-  else if (fromStart < B) { other = ZONE_STYLE[spur ? 6 : (i - 1 + n) % n]; w = 0.5 * (1 - fromStart / B); }
+  if (toEnd < B) { other = ZONE_STYLE[spur ? biomeIndex(REJOIN) : (i + 1) % n]; w = 0.5 * (1 - toEnd / B); }
+  else if (fromStart < B) { other = ZONE_STYLE[spur ? biomeIndex(JUNCTION) : (i - 1 + n) % n]; w = 0.5 * (1 - fromStart / B); }
   if (other) { relief = lerp(relief, other.relief, w); ground = mixc(ground, other.ground, w); }
   return { relief, ground, biome: i };
 }

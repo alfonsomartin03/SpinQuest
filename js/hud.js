@@ -294,7 +294,7 @@ export class Hud {
     setText(this.el['h-zone'], `${BIOMES[bi].name} · ${Math.round(elevation(phase))} m${best ? `   ·   Next: ${found ? best.lm.name : 'unknown landmark'} in ${dTxt}` : ''}`);
   }
 
-  /** The turn point: announced a kilometre out, with a button (or a double click of the Zwift Click) to take the extension. */
+  /** The fork at the foot of the climb: announced a kilometre out, with a button (or a double click of the Zwift Click) to go around. */
   #turn(game) {
     const e = this.el;
     const x = game.extension();
@@ -304,17 +304,17 @@ export class Hud {
     box.classList.toggle('armed', !!x.armed);
     box.classList.toggle('on', x.state === 'on');
     if (x.state === 'on') {
-      setText(e['h-turn-title'], 'Prairie Flats');
-      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go, then back on the loop`);
+      setText(e['h-turn-title'], 'Valley Road');
+      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go, then back on the loop after the descent`);
       e['h-turn-btn'].hidden = true;
       e['h-turn-hint'].hidden = true;
       e['h-turn-bar'].style.width = `${(x.done / x.length) * 100}%`;
       return;
     }
     const m = Math.max(0, Math.round(x.toTurn / 10) * 10);
-    setText(e['h-turn-title'], x.armed ? `Extension ON · turn point in ${m} m` : `Turn point in ${m} m`);
-    setText(e['h-turn-sub'], x.armed ? 'You will bear right onto 10 km of flat road' : 'Add 10 km of flat road, or stay on the loop');
-    setText(e['h-turn-btn'], x.armed ? 'Cancel' : 'Take the extension');
+    setText(e['h-turn-title'], x.armed ? `Going around · fork in ${m} m` : `Fork in ${m} m · up the Col, or around`);
+    setText(e['h-turn-sub'], x.armed ? 'You will bear right and skip the climb' : `Climb the Col de SpinQuest, or take ${(x.length / 1000).toFixed(1)} km of flat road around it`);
+    setText(e['h-turn-btn'], x.armed ? 'Ride up instead' : 'Go around');
     e['h-turn-btn'].hidden = false;
     e['h-turn-hint'].hidden = false;
     e['h-turn-bar'].style.width = `${(1 - x.toTurn / 1000) * 100}%`;
@@ -323,7 +323,7 @@ export class Hud {
   /** Distance left, elevation left and gradient information while on (or about to start) a climb. */
   #climb(game) {
     const e = this.el;
-    const act = activeClimb(game.user.c);
+    const act = game.spurIntent ? null : activeClimb(game.user.c); // no climb panel once you have chosen to skip it
     e['h-climb'].hidden = !act;
     if (!act) { this.vamBuf.length = 0; return; }
     const { climb, stats: st } = act;
@@ -394,7 +394,7 @@ export function showSummary(game, levelBefore, xpBefore) {
     stat(sum.maxHr ? sum.maxHr + ' bpm' : '--', 'Max HR'),
     stat(Math.round(sum.kj) + ' kJ', 'Work'),
     stat(sum.score.toLocaleString(), 'Points'),
-    ...(sum.extensions ? [stat(`${sum.extensions} × 10 km`, 'Flat extension')] : []),
+    ...(sum.extensions ? [stat(`${sum.extensions}×`, 'Around the climb')] : []),
   ].join('');
 
   const canvas = $('s-chart');

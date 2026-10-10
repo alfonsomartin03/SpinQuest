@@ -303,7 +303,7 @@ test('the climb panel appears 450 m before the climb and leaves at the top', () 
   assert.equal(activeClimb(c.start - 400).stats.state, 'before');
   assert.equal(activeClimb(c.start + 1000).climb.id, c.id);
   assert.equal(activeClimb(c.end + 10), null);
-  assert.ok(activeClimb(c.start + 1000 + 2 * TOTAL).climb, 'works on later laps');
+  assert.ok(activeClimb(c.start + 1000 + 4 * LOOP).climb, 'works on later laps');
   assert.equal(activeClimb(LOOP + 500), null, 'no climb on the extension');
 });
 
@@ -402,4 +402,19 @@ test('Zwift Click button frames fire once per press', async () => {
   assert.deepEqual(parseClickButtons(dv(0x37, 0x08, 0xff, 0x10, 0xff), st), [], 'released');
   assert.deepEqual(parseClickButtons(dv(0x37, 0x08, 0xff, 0x10, 0x00), st), ['minus']);
   assert.deepEqual(parseClickButtons(dv(0x01, 0x03), st), [], 'handshake reply ignored');
+});
+
+test('physics: no speed cap, and on a steep descent weight decides who passes 80 km/h', () => {
+  const kmh = (watts, grade, riderKg) => speedFromPower(watts, grade, riderKg + 9) * 3.6;
+  assert.ok(kmh(0, -0.09, 100) > 80, 'a heavy rider coasts past 80 km/h on a 9% descent');
+  assert.ok(kmh(0, -0.09, 55) < 75, 'a light rider does not');
+  assert.ok(kmh(0, -0.09, 100) > kmh(0, -0.09, 75) && kmh(0, -0.09, 75) > kmh(0, -0.09, 55), 'speed rises with weight downhill');
+  assert.ok(kmh(250, -0.12, 75) > 90, 'there is no 79 km/h ceiling any more');
+  assert.ok(kmh(250, 0.07, 55) > kmh(250, 0.07, 100), 'but the light rider wins the climb');
+  assert.ok(kmh(200, 0, 100) < kmh(200, 0, 60), 'and the flat, a little, because bigger riders are bigger in the wind');
+  assert.ok(kmh(300, -0.5, 75) <= 45 * 3.6 + 1e-9, 'the solver still has an outer bound');
+  // the inverse still holds at the new speeds
+  for (const [p, g, m] of [[0, -0.09, 109], [250, -0.1, 84], [400, -0.12, 70]]) {
+    assert.ok(Math.abs(powerFromSpeed(speedFromPower(p, g, m), g, m) - p) < 0.5, `${p} W at ${g} for ${m} kg`);
+  }
 });

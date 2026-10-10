@@ -1,13 +1,13 @@
 // The world: a 10 km closed loop with real map geometry, an elevation profile, themed zones,
-// landmarks and timed segments, plus an optional 10 km flat extension that leaves the loop at a turn point and comes
-// back to the same spot. Everything is a pure function of a course coordinate `c`:
+// landmarks and timed segments, plus a flat road around the outside of the climb: it forks off the loop at the foot of
+// the climb (JUNCTION) and rejoins it after the descent (REJOIN), so a rider chooses to go up the Col or around it.
+// Everything is a pure function of a course coordinate `c`:
 //   c in [0, LOOP)        the main loop (any other value wraps around it, so lap counts can be passed straight in)
-//   c in [LOOP, TOTAL]    the extension, LOOP + metres since the turn point
+//   c in [LOOP, TOTAL]    the road around, LOOP + metres since the fork
 
 export const LOOP = 10000; // metres
-export const SPUR_LEN = 10000; // metres of extension
-export const TOTAL = LOOP + SPUR_LEN;
-export const JUNCTION = 9900; // where the turn point sits on the loop (metres), just before the start line
+export const JUNCTION = 1500; // the fork: the foot of the climb, where the road around leaves the loop (metres)
+export const REJOIN = 6700; // where the road around comes back, after the descent (metres)
 const DS = 5; // path sample spacing (m)
 const N = LOOP / DS;
 const smooth = (t) => { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); };
@@ -145,36 +145,57 @@ function mainElevation(d) {
 }
 const mainGrade = (d) => (mainElevation(d + 6) - mainElevation(d - 6)) / 12;
 
-// ---- The extension ---------------------------------------------------------------------------------------
-// A closed, smooth loop that touches the main road at the turn point with the same heading, so a rider can follow either
-// without any jump in position or direction. It bulges away to the right of the road (outside the main loop) and is
-// rescaled to be exactly SPUR_LEN long. Its profile is nearly flat: it follows the road's own profile for the first
-// and last few hundred metres (so the two roads meet at the same height) and rolls gently in between.
+// ---- The road around ---------------------------------------------------------------------------------------
+// A smooth road that leaves the loop at the fork, swings out around the east and north of the mountain and comes back
+// alongside the descent, meeting the loop with the same heading at both ends so nothing jumps when you join or leave
+// it. Its profile is nearly flat: it follows the loop's own height for the first and last few hundred metres (so the
+// roads meet at the same level) and climbs gently in between.
+
+/** Centripetal Catmull-Rom (Barry-Goldman): stays smooth when the way-points are very unevenly spaced. */
+function centripetal(p0, p1, p2, p3, t) {
+  const knot = (a, b) => Math.sqrt(Math.hypot(b[0] - a[0], b[1] - a[1]));
+  const t1 = knot(p0, p1), t2 = t1 + knot(p1, p2), t3 = t2 + knot(p2, p3);
+  const u = t1 + t * (t2 - t1);
+  const mix = (a, b, ta, tb) => [0, 1].map((k) => ((tb - u) * a[k] + (u - ta) * b[k]) / (tb - ta));
+  const a1 = mix(p0, p1, 0, t1), a2 = mix(p1, p2, t1, t2), a3 = mix(p2, p3, t2, t3);
+  const b1 = mix(a1, a2, 0, t2), b2 = mix(a2, a3, t1, t3);
+  return mix(b1, b2, t1, t2);
+}
 
 const SPUR = (() => {
   const jp = mainPos(JUNCTION), th = mainHeading(JUNCTION);
-  const t = [Math.cos(th), Math.sin(th)], r = [Math.cos(th - Math.PI / 2), Math.sin(th - Math.PI / 2)];
-  const A = 2000, B = 1000; // ellipse half-axes (away from the road, along it); only the proportions matter
-  const shape = (u) => 1 + 0.08 * Math.sin(2 * u + 0.9) + 0.05 * Math.sin(3 * u + 2.1) + 0.03 * Math.sin(5 * u); // 1-periodic wobble
-  const at = (u, k) => {
-    const w = shape(u) * k;
-    return [jp.x + w * A * (1 - Math.cos(u)) * r[0] + w * B * Math.sin(u) * t[0], jp.y + w * A * (1 - Math.cos(u)) * r[1] + w * B * Math.sin(u) * t[1]];
-  };
-  // arc length of the unscaled curve, then scale it (about the turn point) to the length we want
-  const M = 40000;
-  let len = 0, prev = at(0, 1);
-  for (let i = 1; i <= M; i++) { const q = at((i / M) * Math.PI * 2, 1); len += Math.hypot(q[0] - prev[0], q[1] - prev[1]); prev = q; }
-  const k = SPUR_LEN / len;
-  // resample at DS spacing by arc length
-  const dense = Array.from({ length: M + 1 }, (_, i) => at((i / M) * Math.PI * 2, k));
+  const rp = mainPos(REJOIN), tr = mainHeading(REJOIN);
+  const km = (x, y) => [x * 1000, y * 1000];
+  const out = [Math.cos(th), Math.sin(th)], outRight = [Math.cos(th - Math.PI / 2), Math.sin(th - Math.PI / 2)];
+  const back = [Math.cos(tr), Math.sin(tr)], backRight = [Math.cos(tr - Math.PI / 2), Math.sin(tr - Math.PI / 2)];
+  const at = (p, dir, along, right, side) => [p.x + dir[0] * along + side[0] * right, p.y + dir[1] * along + side[1] * right];
+  // way-points out and round. Each end has a point 80 m along the road's own line, so the new road leaves and joins it
+  // tangentially, and a point further off to the outside, which is where the two roads part company.
+  const way = [
+    [jp.x, jp.y], at(jp, out, 80, 0, outRight), at(jp, out, 700, 190, outRight), km(2.75, -0.15), km(3.3, 0.55), km(3.6, 1.6),
+    km(3.4, 2.7), km(2.65, 3.45), km(1.6, 3.8), km(0.95, 3.6),
+    at(rp, back, -650, 230, backRight), at(rp, back, -80, 0, backRight), [rp.x, rp.y],
+  ];
+  const K = 300; // end tangents: the road's own heading at both ends
+  const ctl = [[jp.x - out[0] * K, jp.y - out[1] * K], ...way, [rp.x + back[0] * K, rp.y + back[1] * K]];
+  const dense = [];
+  for (let i = 1; i < ctl.length - 2; i++) {
+    for (let q = 0; q < 400; q++) {
+      const t = q / 400;
+      dense.push(centripetal(ctl[i - 1], ctl[i], ctl[i + 1], ctl[i + 2], t));
+    }
+  }
+  dense.push(way[way.length - 1]);
   const cum = [0];
-  for (let i = 1; i <= M; i++) cum.push(cum[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
-  const n = SPUR_LEN / DS;
+  for (let i = 1; i < dense.length; i++) cum.push(cum[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
+  const len = Math.round(cum[cum.length - 1] / DS) * DS; // a whole number of path samples
+  const n = len / DS;
+  // resample at DS spacing by arc length
   const X = new Float64Array(n + 1), Y = new Float64Array(n + 1);
   let j = 0;
   for (let i = 0; i <= n; i++) {
-    const target = (i / n) * cum[M];
-    while (j < M - 1 && cum[j + 1] <= target) j++;
+    const target = (i / n) * cum[cum.length - 1];
+    while (j < dense.length - 2 && cum[j + 1] <= target) j++;
     const f = (target - cum[j]) / (cum[j + 1] - cum[j] || 1);
     X[i] = dense[j][0] + (dense[j + 1][0] - dense[j][0]) * f;
     Y[i] = dense[j][1] + (dense[j + 1][1] - dense[j][1]) * f;
@@ -194,8 +215,8 @@ const SPUR = (() => {
     const a = Math.max(0, i - 3), b = Math.min(n, i + 3);
     return (th2[b] - th2[a]) / ((b - a) * DS);
   });
-  // elevation. Where the two roads run side by side they must sit at exactly the same height, so near the turn point the
-  // extension takes the height of whichever point of the road is closest to it, not of the same distance along.
+  // elevation. Where the two roads run side by side they must sit at exactly the same height, so near the ends the road
+  // around takes the height of whichever point of the loop is closest to it, not of the same distance along.
   const BLEND = 450;
   const xyAt = (sp) => {
     const p = sp / DS, i = Math.min(n - 1, Math.floor(p)), f = p - i;
@@ -211,23 +232,27 @@ const SPUR = (() => {
     return mainElevation(bd);
   };
   const eStart = Float64Array.from({ length: BLEND + 1 }, (_, q) => roadHeightBeside(q, JUNCTION - 40, JUNCTION + BLEND + 150));
-  const eEnd = Float64Array.from({ length: BLEND + 1 }, (_, q) => roadHeightBeside(SPUR_LEN - q, JUNCTION - BLEND - 150, JUNCTION + 40));
+  const eEnd = Float64Array.from({ length: BLEND + 1 }, (_, q) => roadHeightBeside(len - q, REJOIN - BLEND - 150, REJOIN + 40));
   const lerpAt = (arr, q) => { const i = Math.min(BLEND - 1, Math.floor(q)); return arr[i] + (arr[i + 1] - arr[i]) * (q - i); };
   const lo = eStart[BLEND], hi = eEnd[BLEND];
   const elev = (s) => {
-    const q = Math.min(SPUR_LEN, Math.max(0, s));
-    const u = (q / SPUR_LEN);
-    const mid = lo + (hi - lo) * Math.min(1, Math.max(0, (q - BLEND) / (SPUR_LEN - 2 * BLEND)));
-    const window = smooth(Math.min(q, SPUR_LEN - q) / 700);
-    const roll = window * (3 * Math.sin(u * Math.PI * 2 * 3.1 + 0.4) + 1 * Math.sin(u * Math.PI * 2 * 7.3 + 1.1) + 0.5 * Math.sin(u * Math.PI * 2 * 30 + 2) + 0.2 * Math.sin(u * Math.PI * 2 * 80));
+    const q = Math.min(len, Math.max(0, s));
+    const u = q / len;
+    const mid = lo + (hi - lo) * Math.min(1, Math.max(0, (q - BLEND) / (len - 2 * BLEND)));
+    const window = smooth((Math.min(q, len - q) - 150) / 550); // no rolls while the two roads overlap
+    const roll = window * (2.4 * Math.sin(u * Math.PI * 2 * 3.1 + 0.4) + 0.9 * Math.sin(u * Math.PI * 2 * 7.3 + 1.1) + 0.3 * Math.sin(u * Math.PI * 2 * 30 + 2) + 0.12 * Math.sin(u * Math.PI * 2 * 80));
     const near = (m) => (m <= 150 ? 1 : smooth((BLEND - m) / (BLEND - 150))); // exactly the road's profile where the two roads overlap
-    const a = near(q), b = near(SPUR_LEN - q);
-    const base = mid * (1 - a - b) + (a ? lerpAt(eStart, Math.min(q, BLEND)) * a : 0) + (b ? lerpAt(eEnd, Math.min(SPUR_LEN - q, BLEND)) * b : 0);
+    const a = near(q), b = near(len - q);
+    const base = mid * (1 - a - b) + (a ? lerpAt(eStart, Math.min(q, BLEND)) * a : 0) + (b ? lerpAt(eEnd, Math.min(len - q, BLEND)) * b : 0);
     return base + roll;
   };
-  const E = Float64Array.from({ length: SPUR_LEN + 1 }, (_, s) => elev(s));
-  return { X, Y, th: th2, kap, n, E };
+  const E = Float64Array.from({ length: len + 1 }, (_, s) => elev(s));
+  return { X, Y, th: th2, kap, n, len, E };
 })();
+
+/** Metres of road around the climb, and the end of the coordinate range. */
+export const SPUR_LEN = SPUR.len;
+export const TOTAL = LOOP + SPUR_LEN;
 
 const spurTab = (arr, s) => {
   const p = Math.min(SPUR.n, Math.max(0, s / DS));
@@ -266,7 +291,7 @@ export const BIOMES = [
   { id: 'lake', name: 'Blue Lake', blurb: 'Smooth road along the water', start: 6900, end: 8300, ground: [92, 150, 84] },
   { id: 'village', name: 'Old Village', blurb: 'Crowds, cobbles and cafes', start: 8300, end: 9500, ground: [96, 152, 84] },
   { id: 'fields', name: 'Golden Fields', blurb: 'Last push through the harvest', start: 9500, end: 10000, ground: [200, 172, 82] },
-  { id: 'flats', name: 'Prairie Flats', blurb: 'Long, flat and open. Find your rhythm', start: LOOP, end: TOTAL, ground: [168, 176, 92] },
+  { id: 'flats', name: 'Valley Road', blurb: 'Flat and open, around the mountain. Find your rhythm', start: LOOP, end: TOTAL, ground: [168, 176, 92] },
 ];
 export const SPUR_BIOME = BIOMES.length - 1;
 
@@ -288,8 +313,8 @@ export function envAt(c) {
   let ground = b.ground;
   const toEnd = b.end - p;
   const fromStart = p - b.start;
-  const nextI = spur ? 6 : i === 6 ? 0 : (i + 1) % SPUR_BIOME;
-  const prevI = spur ? 6 : (i - 1 + SPUR_BIOME) % SPUR_BIOME;
+  const nextI = spur ? biomeIndex(REJOIN) : (i + 1) % SPUR_BIOME;
+  const prevI = spur ? biomeIndex(JUNCTION) : (i - 1 + SPUR_BIOME) % SPUR_BIOME;
   if (toEnd < B) ground = mixc(ground, BIOMES[nextI].ground, 0.5 * (1 - toEnd / B));
   else if (fromStart < B) ground = mixc(ground, BIOMES[prevI].ground, 0.5 * (1 - fromStart / B));
   const alt = elevation(p);
@@ -409,7 +434,7 @@ export function climbSplits(samples, climb) {
         t0 = null;
       }
     }
-    prev = onSpur(c) ? JUNCTION : c; // out on the extension, the next point on the loop is the turn point again
+    prev = onSpur(c) ? REJOIN : c; // out on the road around, the next point on the loop is where it rejoins
   });
   return out;
 }

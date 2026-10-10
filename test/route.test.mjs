@@ -1,7 +1,7 @@
-// The turn point and the 10 km extension: where riders are, how they get on and off it, and the controls that choose it.
+// The fork at the foot of the climb and the flat road around it: where riders are, how they get on and off it, and the controls that choose it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LOOP, TOTAL, JUNCTION, SPUR_LEN, posAt, headingAt, elevation, climbSplits, CLIMBS, biomeIndex, BIOMES } from '../js/course.js';
+import { LOOP, TOTAL, JUNCTION, REJOIN, SPUR_LEN, posAt, headingAt, elevation, climbSplits, CLIMBS, biomeIndex, BIOMES } from '../js/course.js';
 import { placeOnLoop, advance, courseAt, roadX, gapBetween, sameStretch } from '../js/route.js';
 import { DoubleClick } from '../js/click.js';
 import { Game, TURN_RANGE } from '../js/game.js';
@@ -11,37 +11,37 @@ import { buildFit, PLACES } from '../js/export.js';
 const rider = (x = 0) => placeOnLoop({}, x);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-test('the extension leaves and rejoins the road at the turn point: same place, same heading, same height', () => {
-  const j = posAt(JUNCTION);
-  for (const c of [LOOP, TOTAL]) {
-    assert.ok(dist(posAt(c), j) < 0.01, `position at ${c}`);
-    assert.ok(Math.abs(elevation(c) - elevation(JUNCTION)) < 0.01, `height at ${c}`);
-    const dh = headingAt(c) - headingAt(JUNCTION);
-    assert.ok(Math.abs(Math.atan2(Math.sin(dh), Math.cos(dh))) < 0.02, `heading at ${c}`);
+test('the road around leaves the loop at the foot of the climb and rejoins it after the descent, with the same heading and height', () => {
+  for (const [c, at] of [[LOOP, JUNCTION], [TOTAL, REJOIN]]) {
+    assert.ok(dist(posAt(c), posAt(at)) < 0.01, `position at ${c}`);
+    assert.ok(Math.abs(elevation(c) - elevation(at)) < 0.01, `height at ${c}`);
+    const dh = headingAt(c) - headingAt(at);
+    assert.ok(Math.abs(Math.atan2(Math.sin(dh), Math.cos(dh))) < 0.05, `heading at ${c}`);
   }
   assert.equal(TOTAL - LOOP, SPUR_LEN);
+  assert.equal(JUNCTION, CLIMBS[0].start, 'the fork is at the base of the climb');
+  assert.ok(REJOIN > CLIMBS[0].end, 'it rejoins after the summit');
   assert.equal(biomeIndex(LOOP + 100), BIOMES.length - 1);
 });
 
-test('without taking the turn point a lap is 10 km and the rider never leaves the loop', () => {
+test('without going around a lap is 10 km and the rider never leaves the loop', () => {
   const r = rider(0);
   const events = [];
   for (let i = 0; i < 2500; i++) events.push(...advance(r, 10)); // 25 km
-  assert.deepEqual(events.filter((e) => e === 'pass').length, 2);
+  assert.equal(events.filter((e) => e === 'pass').length, 3);
   assert.equal(events.filter((e) => e === 'lap').length, 2);
   assert.equal(r.spur, false);
   assert.ok(Math.abs(r.c - 5000) < 1e-6 && r.laps === 2);
 });
 
-test('taking the turn point adds exactly 10 km and comes back out at the same place', () => {
+test('going around skips the climb: the lap changes length by the road around minus the road it replaces', () => {
   const r = rider(0);
   const seen = [];
   let travelled = 0;
-  const take = () => true;
-  while (r.laps < 1) { const ev = advance(r, 7, take); travelled += 7; seen.push(...ev.filter((e) => e !== 'lap')); }
+  while (r.laps < 1) { const ev = advance(r, 7, () => true); travelled += 7; seen.push(...ev.filter((e) => e !== 'lap')); }
   assert.deepEqual(seen, ['enter', 'exit']);
-  // crossing the start line again took the 10 km of loop plus the 10 km extension, give or take the last step
-  assert.ok(Math.abs(travelled - TOTAL) < 7, `lap was ${travelled} m`);
+  const expected = LOOP - (REJOIN - JUNCTION) + SPUR_LEN;
+  assert.ok(Math.abs(travelled - expected) < 7, `lap was ${travelled} m, expected ${expected}`);
   assert.equal(r.spur, false);
 });
 
@@ -59,29 +59,31 @@ test('the choice is made fresh each time the turn point is reached', () => {
 test('courseAt: the road ahead and behind follows your route', () => {
   const r = rider(JUNCTION - 20);
   assert.ok(Math.abs(courseAt(r, 10, false) - (JUNCTION - 10)) < 1e-9);
-  assert.ok(Math.abs(courseAt(r, 30, true) - (LOOP + 10)) < 1e-9, 'ahead through the turn, when taking it');
+  assert.ok(Math.abs(courseAt(r, 30, true) - (LOOP + 10)) < 1e-9, 'ahead through the fork, when going around');
   assert.ok(Math.abs(courseAt(r, 30, false) - (JUNCTION + 10)) < 1e-9, 'ahead past it, when not');
-  advance(r, 25, () => true); // now 5 m onto the extension
+  advance(r, 25, () => true); // now 5 m onto the road around
   assert.ok(r.spur);
   assert.ok(Math.abs(courseAt(r, -3) - (LOOP + 2)) < 1e-9);
   assert.ok(Math.abs(courseAt(r, -9) - (JUNCTION - 4)) < 1e-9, 'behind you, before you turned off');
   const out = rider(0);
   advance(out, JUNCTION, () => true);
   advance(out, SPUR_LEN + 6, () => true);
-  assert.ok(!out.spur && Math.abs(out.c - (JUNCTION + 6)) < 1e-6);
-  assert.ok(Math.abs(courseAt(out, -10) - (TOTAL - 4)) < 1e-6, 'behind you, still out on the extension');
+  assert.ok(!out.spur && Math.abs(out.c - (REJOIN + 6)) < 1e-6);
+  assert.ok(Math.abs(courseAt(out, -10) - (TOTAL - 4)) < 1e-6, 'behind you, still out on the road around');
 });
 
-test('road positions and gaps: the extension counts as sitting at the turn point, except against each other', () => {
-  const a = rider(9000), b = rider(9500), far = rider(9500);
-  advance(far, 400, () => true); // on the extension, 0 m in
-  assert.ok(far.spur);
-  assert.equal(gapBetween(a, b), 500);
+test('road positions and gaps: the road around is placed by progress along the stretch it replaces', () => {
+  const a = rider(1000), b = rider(1400), far = rider(1400);
+  advance(far, 100 + 0, () => true); // reaches the fork and turns off (1500)
+  assert.ok(far.spur && Math.abs(far.c - LOOP) < 1e-9);
+  assert.equal(gapBetween(a, b), 400);
   assert.equal(roadX(far), JUNCTION);
-  assert.ok(Math.abs(gapBetween(a, far) - 900) < 1e-9);
-  const f2 = rider(9500); advance(f2, 400 + 300, () => true);
-  assert.ok(Math.abs(gapBetween(far, f2) - 300) < 1e-9);
-  assert.ok(sameStretch(a, b) && sameStretch(far, f2));
+  advance(far, SPUR_LEN / 2, () => true);
+  assert.ok(Math.abs(roadX(far) - (JUNCTION + (REJOIN - JUNCTION) / 2)) < 1e-6, 'halfway round is halfway through what it replaces');
+  const other = rider(1400); advance(other, 100 + 300, () => true);
+  assert.ok(Math.abs(gapBetween(far, other) - (other.c - far.c)) < 1e-9, 'two riders on it use real distance');
+  const f2 = rider(1400); advance(f2, 100 + 20 + 300, () => true);
+  assert.ok(sameStretch(a, b) && sameStretch(other, f2));
   assert.ok(!sameStretch(a, f2), 'not on the same road once you are 300 m out');
 });
 
@@ -102,7 +104,7 @@ const newGame = () => new Game({ profile: { name: 'T', weight: 75, ftp: 200, max
 const ride = (g, seconds, power = 220) => { for (let i = 0; i < seconds * 20; i++) g.update(0.05, { power, cadence: 90, hr: 130 }); };
 const placeUser = (g, x) => { placeOnLoop(g.user, x); g.user.x = x; };
 
-test('game: the turn point is announced 1 km out, can be chosen, and the extension is ridden and rewarded', () => {
+test('game: the fork is announced 1 km out, can be chosen, and the road around is ridden to the rejoin', () => {
   const g = newGame();
   placeUser(g, JUNCTION - 1500);
   ride(g, 2);
@@ -115,23 +117,21 @@ test('game: the turn point is announced 1 km out, can be chosen, and the extensi
   assert.equal(g.toggleExtension(false), false, 'can be cancelled');
   assert.equal(g.toggleExtension(true), true);
 
-  const odo0 = g.user.x;
   const seen = [];
-  for (let i = 0; i < 20 * 60 * 40 && g.extension().state !== 'far' || !seen.length; i++) {
-    g.update(0.05, { power: 250, cadence: 90, hr: 130 });
-    for (const e of g.drain()) if (e.type === 'toast') seen.push(e.text);
-    if (i > 20 * 60 * 40) break;
-  }
-  assert.ok(g.user.spur || seen.includes('PRAIRIE FLATS'), 'turned onto the extension');
-  // ride until we are out the other end
-  for (let i = 0; i < 20 * 60 * 60 && !seen.includes('EXTENSION COMPLETE'); i++) {
-    g.update(0.05, { power: 300, cadence: 90, hr: 130 });
-    for (const e of g.drain()) if (e.type === 'toast') seen.push(e.text);
-  }
-  assert.ok(seen.includes('EXTENSION COMPLETE'));
+  const run = (until, max, power = 250) => {
+    for (let i = 0; i < 20 * max && !until(); i++) {
+      g.update(0.05, { power, cadence: 90, hr: 130 });
+      for (const e of g.drain()) if (e.type === 'toast') seen.push(e.text);
+    }
+  };
+  run(() => g.user.spur, 120);
+  assert.ok(g.user.spur, 'turned onto the road around');
+  const odo1 = g.user.x;
+  run(() => seen.includes('BACK ON THE LOOP'), 60 * 40, 300);
+  assert.ok(seen.includes('BACK ON THE LOOP'));
   assert.ok(!g.user.spur && g.spurDone === 1);
-  assert.ok(g.user.x - odo0 > SPUR_LEN, 'the odometer counted the extension');
-  assert.ok(g.progress.ach['extra-mile'] === undefined, 'achievements are checked once a second');
+  assert.ok(Math.abs(g.user.x - odo1 - SPUR_LEN) < 40, 'the odometer counted the road around');
+  assert.ok(g.user.c >= REJOIN && g.user.c < REJOIN + 40, 'came out after the descent');
   const s = g.summary();
   assert.equal(s.extensions, 1);
   assert.ok(s.samples.some((x) => x.c >= LOOP) && s.samples.every((x) => typeof x.c === 'number'));
@@ -187,26 +187,26 @@ test('game: the coach stays beside you through the turn', () => {
   assert.ok(Math.hypot(posAt(g.coach.c).x - posAt(g.user.c).x, posAt(g.coach.c).y - posAt(g.user.c).y) < 80);
 });
 
-test('climb splits follow the course coordinate, so a long lap does not confuse the laps', () => {
+test('climb splits follow the course coordinate: going around skips a climb, and a longer lap does not confuse the laps', () => {
   const c = CLIMBS[0];
-  // lap 1 with the extension (20 km at 10 m/s), then lap 2 without it
   const samples = [];
   let odo = 0;
   const step = (cc) => { odo += 10; samples.push({ p: 200, hr: 140, d: odo, c: cc }); };
+  // lap 1 goes around the climb, laps 2 and 3 go up it
   for (let m = 10; m < JUNCTION; m += 10) step(m);
   for (let m = 0; m < SPUR_LEN; m += 10) step(LOOP + m);
-  for (let m = JUNCTION; m < LOOP; m += 10) step(m);
+  for (let m = REJOIN; m < LOOP; m += 10) step(m);
+  for (let m = 0; m < LOOP; m += 10) step(m);
   for (let m = 0; m < LOOP; m += 10) step(m);
   const s = climbSplits(samples, c);
-  assert.equal(s.length, 2);
-  assert.deepEqual(s.map((x) => x.lap), [1, 2]);
+  assert.deepEqual(s.map((x) => x.lap), [2, 3]);
   assert.ok(s.every((x) => Math.abs(x.time - (c.end - c.start) / 10) < 0.01));
 });
 
 test('the .fit file follows the route onto the extension and the altitude stays right', () => {
   const samples = [];
   let odo = 0;
-  for (let m = 9000; m < JUNCTION; m += 10) { odo += 10; samples.push({ p: 200, hr: 140, cad: 90, v: 10, d: odo, c: m }); }
+  for (let m = JUNCTION - 1000; m < JUNCTION; m += 10) { odo += 10; samples.push({ p: 200, hr: 140, cad: 90, v: 10, d: odo, c: m }); }
   for (let m = 0; m < 3000; m += 10) { odo += 10; samples.push({ p: 200, hr: 140, cad: 90, v: 10, d: odo, c: LOOP + m }); }
   const bytes = buildFit({ samples, startedAt: Date.UTC(2026, 9, 9, 12), place: PLACES[0] });
   assert.ok(bytes.length > 500);

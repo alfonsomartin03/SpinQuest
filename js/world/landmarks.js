@@ -512,8 +512,8 @@ export function buildLandmarks(field) {
   }
   // kilometre markers
   for (let k = 1; k < 10; k++) placeObj(kmSign(k), k * 1000, 8.4);
-  // the turn point, and the extension's own kilometre markers
-  placeObj(gantry('TURN POINT  ·  +10 KM FLAT', '#14a89a', { bunting: false, height: 6.8, width: 7.4 }), JUNCTION - 130, 0, { yawFrom: 'along' });
+  // the fork at the foot of the climb, and the road around's own kilometre markers
+  placeObj(gantry('THE FORK  ·  UP THE COL OR AROUND', '#14a89a', { bunting: false, height: 6.8, width: 7.4 }), JUNCTION - 130, 0, { yawFrom: 'along' });
   for (let k = 1; k < SPUR_LEN / 1000; k++) placeObj(kmSign(k, `+${k} km`), LOOP + k * 1000, 8.4);
 
   // cheering crowds

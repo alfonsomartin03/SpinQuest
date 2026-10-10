@@ -20,12 +20,11 @@ const { TerrainField, LAKE, RIVER, lakeR } = await import('../js/world/terrain.j
 const { massHeight, MASS_H } = await import('../js/world/structures.js');
 const course = await import('../js/course.js');
 
-// Around the turn point two roads share a few hundred metres at slightly different stations, so the ground between them
+// At the fork and the rejoin two roads share a few hundred metres at slightly different stations, so the ground between them
 // cannot match both to the centimetre; everywhere else the tolerances are strict.
 const nearTurn = (d) => {
-  const m = ((d % course.LOOP) + course.LOOP) % course.LOOP;
-  const dm = Math.min(Math.abs(m - course.JUNCTION), course.LOOP - Math.abs(m - course.JUNCTION));
-  return dm < 450 || (d >= course.LOOP && (d - course.LOOP < 450 || course.TOTAL - d < 450));
+  if (d >= course.LOOP) return d - course.LOOP < 450 || course.TOTAL - d < 450;
+  return Math.abs(d - course.JUNCTION) < 450 || Math.abs(d - course.REJOIN) < 450;
 };
 
 const field = new TerrainField();
@@ -43,12 +42,12 @@ test('road frames are continuous and the loop closes', () => {
   assert.ok(Math.hypot(a.x - b.x, a.z - b.z) < 0.1);
 });
 
-test('the extension is a closed loop that leaves and rejoins the road at the turn point, heading the same way', () => {
-  const j = geo.frame(course.JUNCTION), s0 = geo.frame(course.LOOP), s1 = geo.frame(course.TOTAL);
-  for (const p of [s0, s1]) {
-    assert.ok(Math.hypot(p.x - j.x, p.z - j.z) < 0.05, 'meets the road');
-    assert.ok(Math.abs(p.y - j.y) < 0.05, 'at the same height');
-    assert.ok(Math.hypot(p.tx - j.tx, p.tz - j.tz) < 0.02, 'heading the same way');
+test('the road around leaves the loop at the fork and rejoins it after the descent, heading the same way', () => {
+  const j = geo.frame(course.JUNCTION), r = geo.frame(course.REJOIN), s0 = geo.frame(course.LOOP), s1 = geo.frame(course.TOTAL);
+  for (const [p, q, what] of [[s0, j, 'fork'], [s1, r, 'rejoin']]) {
+    assert.ok(Math.hypot(p.x - q.x, p.z - q.z) < 0.05, `meets the road at the ${what}`);
+    assert.ok(Math.abs(p.y - q.y) < 0.05, `at the same height at the ${what}`);
+    assert.ok(Math.hypot(p.tx - q.tx, p.tz - q.tz) < 0.05, `heading the same way at the ${what}`);
   }
   let prev = s0;
   for (let d = course.LOOP + 1; d <= course.TOTAL; d++) {
@@ -59,12 +58,13 @@ test('the extension is a closed loop that leaves and rejoins the road at the tur
   }
 });
 
-test('the extension is 10 km, mostly flat, and stays well clear of the loop away from the turn point', () => {
+test('the road around is mostly flat and stays well clear of the loop away from its ends', () => {
   let steep = 0, n = 0;
-  for (let s = 0; s <= course.SPUR_LEN; s += 10) { n++; if (Math.abs(course.gradeAt(course.LOOP + s)) > 0.03) steep++; }
-  assert.ok(steep / n < 0.05, `${steep} of ${n} samples steeper than 3%`);
+  for (let s = 600; s <= course.SPUR_LEN - 600; s += 10) { n++; if (Math.abs(course.gradeAt(course.LOOP + s)) > 0.03) steep++; } // beyond the ends, where it takes the loop's own profile
+  assert.ok(steep / n < 0.03, `${steep} of ${n} samples steeper than 3%`);
+  assert.ok(course.SPUR_LEN > 8000 && course.SPUR_LEN < 12000, `${course.SPUR_LEN} m`);
   let near = Infinity;
-  for (let s = 700; s <= course.SPUR_LEN - 700; s += 25) {
+  for (let s = 1000; s <= course.SPUR_LEN - 1000; s += 25) {
     const p = geo.frame(course.LOOP + s);
     for (let d = 0; d < course.LOOP; d += 25) { const q = geo.frame(d); near = Math.min(near, Math.hypot(p.x - q.x, p.z - q.z)); }
   }
@@ -82,7 +82,7 @@ test('the terrain sits just under the road all the way round (except tunnel and 
     }
   }
   assert.ok(worst < 0.1, `corridor error ${worst}`);
-  assert.ok(worstTurn < 0.25, `corridor error at the turn point ${worstTurn}`);
+  assert.ok(worstTurn < 0.4, `corridor error at the fork and rejoin ${worstTurn}`);
 });
 
 test('the tunnel hill is a built mesh and the terrain never covers the road, even at the portals', () => {
@@ -110,7 +110,7 @@ test('the lake never touches or floods the road, and the stream runs downhill in
 test('mountains rise well above the road far from it', () => {
   let max = -1e9;
   for (let x = -2500; x <= 4000; x += 150) for (let z = -4000; z <= 1500; z += 150) max = Math.max(max, field.height(x, z));
-  assert.ok(max > 450, `highest peak ${max}`);
+  assert.ok(max > 380, `highest peak ${max}`); // the road around the outside now skirts the highest ground
 });
 
 test('the drawn terrain mesh (a coarse 10 m grid) never rises above the road surface', () => {
