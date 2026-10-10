@@ -6,7 +6,8 @@ import { VirtualGears, slew, GEAR_RATIOS } from '../js/gearing.js';
 import { speedFromPower, powerFromSpeed, gradeAt, elevation, LOOP, SEGMENTS, powerZone, levelFor, xpForLevel } from '../js/physics.js';
 import { WORKOUTS, workoutAt, totalDuration } from '../js/workouts.js';
 import { Game } from '../js/game.js';
-import { posAt, headingAt, LANDMARKS, envAt, CLIMBS, climbStats, activeClimb, elevation as realElev } from '../js/course.js';
+import { placeOnLoop } from '../js/route.js';
+import { TOTAL, posAt, headingAt, LANDMARKS, envAt, CLIMBS, climbStats, activeClimb, elevation as realElev } from '../js/course.js';
 import { PROTOCOL_VERSION, sanitizeState, RemoteRider, LoopbackSession, DemoPeers, packRider } from '../js/net.js';
 
 const view = (bytes) => new DataView(new Uint8Array(bytes).buffer);
@@ -62,7 +63,7 @@ test('physics: sensible speeds', () => {
 });
 
 test('course loops seamlessly and has sane gradients', () => {
-  assert.ok(Math.abs(elevation(0) - elevation(LOOP)) < 1e-9);
+  assert.ok(Math.abs(elevation(0) - elevation(LOOP - 1e-6)) < 1e-3);
   for (let d = 0; d < LOOP; d += 25) assert.ok(Math.abs(gradeAt(d)) < 0.105, `grade ${gradeAt(d)} at ${d}`);
   assert.equal(SEGMENTS.length, 4);
   for (const s of SEGMENTS) assert.ok(s.start >= 0 && s.end <= LOOP);
@@ -71,8 +72,8 @@ test('course loops seamlessly and has sane gradients', () => {
 test('course geometry closes on itself and has landmarks in zones', () => {
   const a = posAt(0), b = posAt(LOOP - 5);
   assert.ok(Math.hypot(a.x - b.x, a.y - b.y) < 8);
-  assert.ok(Math.abs(headingAt(LOOP) - headingAt(0)) > 6); // one full turn per lap
-  for (const lm of LANDMARKS) assert.ok(lm.d >= 0 && lm.d < LOOP);
+  assert.ok(Math.abs(headingAt(LOOP - 1e-6) - headingAt(0)) > 6); // one full turn per lap
+  for (const lm of LANDMARKS) assert.ok(lm.d >= 0 && lm.d <= TOTAL && lm.d !== LOOP);
   assert.ok(envAt(7500).water > 0.9 && envAt(1000).water === 0);
   assert.ok(envAt(4600).snow > 0.5 && envAt(500).snow === 0);
 });
@@ -249,7 +250,7 @@ test('virtual gears: auto-shift follows the comfortable range', () => {
 test('game: stopping pedalling brakes to a halt (even downhill) and pauses', () => {
   const progress = { xp: 0, ach: {}, segPR: {}, discovered: {} };
   const g = new Game({ profile: { name: 'T', weight: 75, ftp: 200, maxHr: 190 }, workout: WORKOUTS[0], progress });
-  g.user.x = 5700; // a steep descent
+  placeOnLoop(g.user, 5700); g.user.x = 5700; // a steep descent
   for (let i = 0; i < 20 * 20; i++) g.update(0.05, { power: 200, cadence: 90, hr: 120 });
   assert.ok(g.user.v > 8, 'rolling');
   assert.ok(!g.paused);
@@ -302,7 +303,8 @@ test('the climb panel appears 450 m before the climb and leaves at the top', () 
   assert.equal(activeClimb(c.start - 400).stats.state, 'before');
   assert.equal(activeClimb(c.start + 1000).climb.id, c.id);
   assert.equal(activeClimb(c.end + 10), null);
-  assert.ok(activeClimb(c.start + 1000 + 10000).climb, 'works on later laps');
+  assert.ok(activeClimb(c.start + 1000 + 2 * TOTAL).climb, 'works on later laps');
+  assert.equal(activeClimb(LOOP + 500), null, 'no climb on the extension');
 });
 
 const rstate = (over = {}) => ({ v: PROTOCOL_VERSION, id: 'p1', name: 'Sam', color: '#4cc9f0', t: 1000, x: 100, lat: 0, speed: 10, power: 250, cad: 90, hr: 150, weight: 70, ftp: 250, ...over });

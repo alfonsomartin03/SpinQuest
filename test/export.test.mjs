@@ -86,12 +86,12 @@ test('route length equals recorded distance, at every place', () => {
 });
 
 test('altitude and grade follow the course profile', () => {
-  const rec = decode(buildFit({ ...ride, place: PLACES[1] })).filter((m) => m.global === 20);
+  const rec = decode(buildFit({ ...ride, place: PLACES[0] })).filter((m) => m.global === 20);
   rec.forEach((m, i) => {
     const alt = m[2] / 5 - 500;
-    assert.ok(Math.abs(alt - elevation(ride.samples[i].d)) < 0.11, `alt at ${i}`);
+    assert.ok(Math.abs(alt - elevation(ride.samples[i].d % LOOP)) < 0.11, `alt at ${i}`);
   });
-  const [session] = decode(buildFit({ ...ride, place: PLACES[1] })).filter((m) => m.global === 18);
+  const [session] = decode(buildFit({ ...ride, place: PLACES[0] })).filter((m) => m.global === 18);
   assert.ok(session[22] > 150, 'it climbs the pass');
 });
 
@@ -107,9 +107,9 @@ test('the bends in the file are the bends of the course', () => {
 });
 
 test('the loop is placed in open sea around the chosen spot', () => {
-  const where = projector(PLACES[1]);
+  const where = projector(PLACES[0]);
   const p = where(0), q = where(5000);
-  assert.ok(haversine(p, PLACES[1]) < 3000 && haversine(q, PLACES[1]) < 3000);
+  assert.ok(haversine(p, PLACES[0]) < 3000 && haversine(q, PLACES[0]) < 3000);
   assert.ok(haversine(where(LOOP - 1), where(0)) < 2, 'loop closes');
 });
 

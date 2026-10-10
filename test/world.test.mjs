@@ -20,12 +20,20 @@ const { TerrainField, LAKE, RIVER, lakeR } = await import('../js/world/terrain.j
 const { massHeight, MASS_H } = await import('../js/world/structures.js');
 const course = await import('../js/course.js');
 
+// Around the turn point two roads share a few hundred metres at slightly different stations, so the ground between them
+// cannot match both to the centimetre; everywhere else the tolerances are strict.
+const nearTurn = (d) => {
+  const m = ((d % course.LOOP) + course.LOOP) % course.LOOP;
+  const dm = Math.min(Math.abs(m - course.JUNCTION), course.LOOP - Math.abs(m - course.JUNCTION));
+  return dm < 450 || (d >= course.LOOP && (d - course.LOOP < 450 || course.TOTAL - d < 450));
+};
+
 const field = new TerrainField();
 field.buildGrids();
 
 test('road frames are continuous and the loop closes', () => {
   let prev = geo.frame(0);
-  for (let d = 1; d <= course.LOOP; d++) {
+  for (let d = 1; d < course.LOOP; d++) {
     const f = geo.frame(d);
     assert.ok(Math.hypot(f.x - prev.x, f.z - prev.z) < 1.05, `gap at ${d}`);
     assert.ok(Math.abs(f.y - prev.y) < 0.35, `jump in height at ${d}`);
@@ -35,17 +43,46 @@ test('road frames are continuous and the loop closes', () => {
   assert.ok(Math.hypot(a.x - b.x, a.z - b.z) < 0.1);
 });
 
+test('the extension is a closed loop that leaves and rejoins the road at the turn point, heading the same way', () => {
+  const j = geo.frame(course.JUNCTION), s0 = geo.frame(course.LOOP), s1 = geo.frame(course.TOTAL);
+  for (const p of [s0, s1]) {
+    assert.ok(Math.hypot(p.x - j.x, p.z - j.z) < 0.05, 'meets the road');
+    assert.ok(Math.abs(p.y - j.y) < 0.05, 'at the same height');
+    assert.ok(Math.hypot(p.tx - j.tx, p.tz - j.tz) < 0.02, 'heading the same way');
+  }
+  let prev = s0;
+  for (let d = course.LOOP + 1; d <= course.TOTAL; d++) {
+    const f = geo.frame(d);
+    assert.ok(Math.hypot(f.x - prev.x, f.z - prev.z) < 1.05, `gap at ${d}`);
+    assert.ok(Math.abs(f.y - prev.y) < 0.35, `jump in height at ${d}`);
+    prev = f;
+  }
+});
+
+test('the extension is 10 km, mostly flat, and stays well clear of the loop away from the turn point', () => {
+  let steep = 0, n = 0;
+  for (let s = 0; s <= course.SPUR_LEN; s += 10) { n++; if (Math.abs(course.gradeAt(course.LOOP + s)) > 0.03) steep++; }
+  assert.ok(steep / n < 0.05, `${steep} of ${n} samples steeper than 3%`);
+  let near = Infinity;
+  for (let s = 700; s <= course.SPUR_LEN - 700; s += 25) {
+    const p = geo.frame(course.LOOP + s);
+    for (let d = 0; d < course.LOOP; d += 25) { const q = geo.frame(d); near = Math.min(near, Math.hypot(p.x - q.x, p.z - q.z)); }
+  }
+  assert.ok(near > 300, `comes within ${near.toFixed(0)} m of the loop`);
+});
+
 test('the terrain sits just under the road all the way round (except tunnel and bridge)', () => {
-  let worst = 0;
-  for (let d = 0; d < course.LOOP; d += 5) {
+  let worst = 0, worstTurn = 0;
+  for (let d = 0; d < course.TOTAL; d += 5) {
     if ((d > course.TUNNEL.start - 25 && d < course.TUNNEL.end + 25) || Math.abs(d - course.BRIDGE.x) < 30) continue;
     const f = geo.frame(d);
     for (const lat of [-4.5, 0, 4.5]) {
       const err = Math.abs(field.height(f.x + f.rx * lat, f.z + f.rz * lat) - (f.y - 0.12));
-      worst = Math.max(worst, err);
+      if (nearTurn(d)) worstTurn = Math.max(worstTurn, err); else worst = Math.max(worst, err);
     }
   }
   assert.ok(worst < 0.1, `corridor error ${worst}`);
+  assert.ok(worstTurn < 0.25, `corridor error at the turn point ${worstTurn}`);
 });
 
 test('the tunnel hill is a built mesh and the terrain never covers the road, even at the portals', () => {
@@ -79,7 +116,7 @@ test('mountains rise well above the road far from it', () => {
 test('the drawn terrain mesh (a coarse 10 m grid) never rises above the road surface', () => {
   // mirrors how scene3d builds the inner mesh: 10 m cells, triangles (a,c,b) and (b,c,d)
   const CELL = 10;
-  const x0 = geo.BOUNDS.minX - 800, z0 = geo.BOUNDS.minZ - 800;
+  const x0 = geo.BOUNDS.minX - 560, z0 = geo.BOUNDS.minZ - 560; // FINE_R + 60, as in scene3d
   const cache = new Map();
   const H = (ix, iz) => { const k = ix * 100000 + iz; if (!cache.has(k)) cache.set(k, field.height(x0 + ix * CELL, z0 + iz * CELL)); return cache.get(k); };
   const meshY = (x, z) => {
@@ -88,13 +125,15 @@ test('the drawn terrain mesh (a coarse 10 m grid) never rises above the road sur
     const a = H(ix, iz), b = H(ix + 1, iz), c = H(ix, iz + 1), d = H(ix + 1, iz + 1);
     return u + v <= 1 ? a + (b - a) * u + (c - a) * v : d + (c - d) * (1 - u) + (b - d) * (1 - v);
   };
-  let worst = -1e9, at = '';
-  for (let d = 0; d < course.LOOP; d += 3) {
+  let worst = -1e9, at = '', worstTurn = -1e9;
+  for (let d = 0; d < course.TOTAL; d += 3) {
     const p = geo.frame(d);
     for (const lat of [-5.8, -4.5, -2.2, 0, 2.2, 4.5, 5.8]) {
       const err = meshY(p.x + p.rx * lat, p.z + p.rz * lat) - p.y;
-      if (err > worst) { worst = err; at = `d=${d} lat=${lat}`; }
+      if (nearTurn(d)) worstTurn = Math.max(worstTurn, err);
+      else if (err > worst) { worst = err; at = `d=${d} lat=${lat}`; }
     }
   }
   assert.ok(worst < -0.02, `terrain pokes ${worst.toFixed(2)} m above the road at ${at}`);
+  assert.ok(worstTurn < 0.12, `terrain pokes ${worstTurn.toFixed(2)} m above the road at the turn point`);
 });

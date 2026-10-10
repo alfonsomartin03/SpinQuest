@@ -184,6 +184,11 @@
   <div class="top-center">
     <div class="zone-line" id="h-zone"></div>
     <canvas id="h-mini" width="720" height="84"></canvas>
+    <div class="turn-banner" id="h-turn" hidden>
+      <div class="turn-text"><b id="h-turn-title"></b><span id="h-turn-sub"></span></div>
+      <div class="turn-act"><button class="btn" id="h-turn-btn">Take the extension</button><small id="h-turn-hint">or double-click your Zwift Click · <kbd>E</kbd></small></div>
+      <div class="bar"><i id="h-turn-bar"></i></div>
+    </div>
     <div class="seg-banner" id="h-seg" hidden><b id="h-seg-name"></b><div class="bar"><i id="h-seg-bar"></i></div><span id="h-seg-time"></span></div>
   </div>
 
@@ -233,7 +238,7 @@
       <div>
         <b>Upload this ride</b>
         <small>Download a .fit file for Strava, Garmin Connect, TrainingPeaks and others. It is marked as a virtual ride, and the route is your course laid over
-          <select id="s-place" aria-label="Where to place the route"></select>
+          <b>the Bermuda Triangle</b>
           at true scale, so distance, climbing and turns match. Kept in memory only: it is deleted when you close this tab or start another ride.</small>
       </div>
       <button class="btn primary" id="s-fit-dl">⬇ Download .fit</button>

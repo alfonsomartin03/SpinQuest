@@ -5,30 +5,27 @@
 // distance, elevation and every bend in the file are the ones the rider rode. The file declares itself a virtual
 // activity (not a GPS ride), so platforms file it as a Virtual Ride.
 
-import { posAt, elevation, gradeAt, START, MAP } from './course.js';
+import { posAt, elevation, gradeAt, MAP, LOOP } from './course.js';
 import { FitWriter, toFitTime } from './fit.js';
 
-/** Two spots with no road within hundreds of kilometres. */
+/** The one spot every ride is placed at: open sea, no road within hundreds of kilometres. */
 export const PLACES = [
-  { id: 'nemo', name: 'Point Nemo', note: 'the loneliest place on Earth', lat: -48.8767, lon: -123.3933 },
   { id: 'bermuda', name: 'The Bermuda Triangle', note: 'try not to vanish', lat: 25.0, lon: -71.0 },
 ];
-
-export const pickPlace = (rand = Math.random) => PLACES[Math.floor(rand() * PLACES.length)];
 
 const EARTH_R = 6371008.8; // m; the mean radius haversine distance uses
 const DEG = 180 / Math.PI;
 const SEMI = 2 ** 31 / 180; // degrees -> FIT semicircles
 export const MIN_SECONDS = 10; // shorter rides are not worth uploading
 
-/** Maps a distance along the course to a latitude/longitude with the loop centred on `place`. */
+/** Maps a course coordinate (see course.js) to a latitude/longitude with the loop centred on `place`. */
 export function projector(place) {
   const cx = (MAP.minX + MAP.maxX) / 2;
   const cy = (MAP.minY + MAP.maxY) / 2;
   const kLat = DEG / EARTH_R;
   const kLon = DEG / (EARTH_R * Math.cos(place.lat / DEG));
   return (d) => {
-    const p = posAt(START + d); // x = east, y = north, in metres
+    const p = posAt(d); // x = east, y = north, in metres
     return { lat: place.lat + (p.y - cy) * kLat, lon: place.lon + (p.x - cx) * kLon };
   };
 }
@@ -36,7 +33,8 @@ export function projector(place) {
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
 /**
- * @param {{samples:{p,hr,cad,v,d}[], startedAt:number, place:object}} ride  one sample per second of riding
+ * @param {{samples:{p,hr,cad,v,d,c?}[], startedAt:number, place:object}} ride  one sample per second of riding. `d` is the
+ *   distance ridden; `c` is where on the course that was (it differs once the rider takes the extension).
  * @returns {Uint8Array} the bytes of a .fit file
  */
 export function buildFit({ samples, startedAt, place }) {
@@ -47,10 +45,11 @@ export function buildFit({ samples, startedAt, place }) {
   const altCode = (m) => Math.round((m + 500) * 5);
 
   const rows = samples.map((s, i) => {
-    const pos = where(s.d);
+    const c = s.c ?? s.d % LOOP;
+    const pos = where(c);
     return {
-      t: t0 + i + 1, lat: semi(pos.lat), lon: semi(pos.lon), alt: altCode(elevation(START + s.d)), hr: s.hr, cad: s.cad,
-      dist: Math.round(s.d * 100), speed: Math.round(s.v * 1000), power: Math.round(s.p), grade: Math.round(gradeAt(START + s.d) * 10000),
+      t: t0 + i + 1, lat: semi(pos.lat), lon: semi(pos.lon), alt: altCode(elevation(c)), hr: s.hr, cad: s.cad,
+      dist: Math.round(s.d * 100), speed: Math.round(s.v * 1000), power: Math.round(s.p), grade: Math.round(gradeAt(c) * 10000),
     };
   });
   let ascent = 0, descent = 0;

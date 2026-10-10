@@ -1,5 +1,7 @@
 // Achievements are checked once a second against the live game state.
 
+import { LANDMARKS } from './course.js';
+
 export const ACHIEVEMENTS = [
   { id: 'first-spin', name: 'First Spin', desc: 'Pedal for a full minute', test: (g) => g.t >= 60 },
   { id: 'warmed-up', name: 'Warmed Up', desc: 'Ride for 10 minutes', test: (g) => g.t >= 600 },
@@ -15,5 +17,6 @@ export const ACHIEVEMENTS = [
   { id: 'max-combo', name: 'Max Combo', desc: 'Reach the x5 multiplier', test: (g) => g.mult >= 5 },
   { id: 'twenty', name: 'Twenty Club', desc: 'Ride 20 km in one go', test: (g) => g.distance >= 20000 },
   { id: 'summit', name: 'Summit Seeker', desc: 'Reach the top of the pass', test: (g) => !!g.progress.discovered.summit },
-  { id: 'explorer', name: 'Explorer', desc: 'Discover every landmark', test: (g) => Object.keys(g.progress.discovered).length >= 12 },
+  { id: 'explorer', name: 'Explorer', desc: 'Discover every landmark', test: (g) => Object.keys(g.progress.discovered).length >= LANDMARKS.length },
+  { id: 'extra-mile', name: 'Extra Mile', desc: 'Ride the 10 km flat extension', test: (g) => g.spurDone >= 1 },
 ];

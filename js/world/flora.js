@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LOOP, BIOMES, LANDMARKS, TUNNEL, BRIDGE, biomeIndex } from '../course.js';
+import { TOTAL, BIOMES, LANDMARKS, TUNNEL, BRIDGE, biomeIndex } from '../course.js';
 import { frame, place } from './geo.js';
 import { RIVER, LAKE, lakeR } from './terrain.js';
 import { mulberry32, makeNoise, smoothstep as sm } from './noise.js';
@@ -271,6 +271,7 @@ const ZONES = [
   { name: 'lake', dens: 0.9, lat: [8, 110], sp: [['birch', 34], ['broadleaf', 22], ['bush', 20], ['rock', 14], ['pine', 10]] },
   { name: 'village', dens: 0.3, lat: [9, 70], sp: [['broadleaf', 5], ['bush', 4]] },
   { name: 'fields', dens: 0.35, lat: [10, 120], sp: [['broadleaf', 6], ['bush', 2], ['rock', 1]] },
+  { name: 'flats', dens: 0.28, lat: [12, 160], sp: [['broadleaf', 5], ['bush', 5], ['birch', 2], ['rock', 1]] },
 ];
 const GRASS = [
   { kind: 'flowers', n: 6, lat: [6.4, 30], alt: 'grass' },
@@ -280,6 +281,7 @@ const GRASS = [
   { kind: 'grass', n: 4, lat: [6.4, 26] },
   { kind: 'grass', n: 1.5, lat: [6.4, 14] },
   { kind: 'wheat', n: 11, lat: [6.4, 80] },
+  { kind: 'grass', n: 1.9, lat: [6.4, 26], alt: 'flowers' },
 ];
 
 export async function buildFlora(field, { density = 1, grassDensity = 1, onProgress = null } = {}) {
@@ -323,7 +325,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
 
   // --- trees, rocks, bushes -------------------------------------------------
   const step = 3;
-  for (let s = 0; s < LOOP; s += step) {
+  for (let s = 0; s < TOTAL; s += step) {
     const zi = biomeIndex(s);
     const zone = ZONES[zi];
     const total = zone.sp.reduce((a, [, w]) => a + w, 0);
@@ -364,11 +366,11 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
         else push(sp, x, z, mat(x, h - 0.15, z, ry, size));
       }
     }
-    await yieldNow((s / LOOP) * 0.35);
+    await yieldNow((s / TOTAL) * 0.35);
   }
 
   // --- grass, flowers, wheat, reeds ---------------------------------------------
-  for (let s = 0; s < LOOP; s += 2.5) {
+  for (let s = 0; s < TOTAL; s += 2.5) {
     const zi = biomeIndex(s);
     const g = GRASS[zi];
     const f = frame(s);
@@ -394,7 +396,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
         push(kind, x, z, mat(x, h - 0.03, z, rng() * 6.28, w, kind === 'wheat' ? 1.2 + rng() * 0.5 : 0.55 + rng() * 0.55));
       }
     }
-    await yieldNow(0.35 + (s / LOOP) * 0.3);
+    await yieldNow(0.35 + (s / TOTAL) * 0.3);
   }
   // reeds right on the shoreline
   for (let i = 0; i < 520; i++) {
@@ -440,7 +442,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
       push('lamp', x, z, mat(x, h, z, -face, 1));
     }
   }
-  for (const zi of [0, 3, 6]) {
+  for (const zi of [0, 3, 6, 7]) {
     const zn = BIOMES[zi];
     for (let s = zn.start; s < zn.end; s += 15) {
       if (rng() > 0.55) continue;

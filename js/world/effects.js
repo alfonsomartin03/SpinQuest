@@ -28,7 +28,7 @@ export class OrbField {
   }
 
   /** Lay out the orbs between the rider and ~250 m ahead. */
-  update(t, userX, collected) {
+  update(t, userX, collected, courseOf = (x) => x) {
     const i0 = Math.floor((userX - 6) / ORB_SPACING);
     const i1 = i0 + Math.ceil(260 / ORB_SPACING);
     let n = 0;
@@ -36,7 +36,7 @@ export class OrbField {
     for (let i = i0; i <= i1 && n < this.max; i++) {
       const o = orbAt(i);
       if (!o || collected.has(i)) continue;
-      place(o.x, o.lat, o.h + 0.25 + Math.sin(t * 2.4 + i) * 0.06, this.p);
+      place(courseOf(o.x), o.lat, o.h + 0.25 + Math.sin(t * 2.4 + i) * 0.06, this.p);
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t * 1.8 + i);
       const sc = o.gold ? 1.35 : 1;
       pos.set(this.p.x, this.p.y, this.p.z);

@@ -3,7 +3,7 @@
 // zone, slope and altitude, so there are no texture assets to ship.
 
 import * as THREE from 'three';
-import { LOOP, BIOMES, BRIDGE, LAKE_SHAPE } from '../course.js';
+import { LOOP, TOTAL, SPUR_BIOME, BIOMES, BRIDGE, LAKE_SHAPE, onSpur } from '../course.js';
 import { frame, place, elevEx, BOUNDS } from './geo.js';
 import { makeNoise, smoothstep as sm, lerp } from './noise.js';
 
@@ -17,6 +17,7 @@ const ZONE_STYLE = [
   { relief: 0.7, ground: '#5f9a48' }, // lake
   { relief: 0.25, ground: '#7aa356' }, // village
   { relief: 0.22, ground: '#c4a653' }, // fields
+  { relief: 0.18, ground: '#a3b05a' }, // prairie flats (the extension)
 ].map((z) => ({ relief: z.relief, ground: new THREE.Color(z.ground).toArray() }));
 
 const ROCK = new THREE.Color('#77726a').toArray();
@@ -29,19 +30,20 @@ const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a
 
 /** Zone relief and ground colour at distance s along the road, blended across zone borders. */
 function zoneAt(s) {
-  const p = ((s % LOOP) + LOOP) % LOOP;
-  const i = BIOMES.findIndex((b) => p >= b.start && p < b.end);
+  const spur = onSpur(s);
+  const p = spur ? s : ((s % LOOP) + LOOP) % LOOP;
+  const i = spur ? SPUR_BIOME : BIOMES.findIndex((b) => p >= b.start && p < b.end);
   const b = BIOMES[i];
   const B = 260;
   let relief = ZONE_STYLE[i].relief;
   let ground = ZONE_STYLE[i].ground;
   const toEnd = b.end - p;
   const fromStart = p - b.start;
-  const n = BIOMES.length;
+  const n = SPUR_BIOME; // the zones that make up the loop
   let other = null;
   let w = 0;
-  if (toEnd < B) { other = ZONE_STYLE[(i + 1) % n]; w = 0.5 * (1 - toEnd / B); }
-  else if (fromStart < B) { other = ZONE_STYLE[(i - 1 + n) % n]; w = 0.5 * (1 - fromStart / B); }
+  if (toEnd < B) { other = ZONE_STYLE[spur ? 6 : (i + 1) % n]; w = 0.5 * (1 - toEnd / B); }
+  else if (fromStart < B) { other = ZONE_STYLE[spur ? 6 : (i - 1 + n) % n]; w = 0.5 * (1 - fromStart / B); }
   if (other) { relief = lerp(relief, other.relief, w); ground = mixc(ground, other.ground, w); }
   return { relief, ground, biome: i };
 }
@@ -146,7 +148,14 @@ export class TerrainField {
   constructor() {
     this.noise = makeNoise(20260);
     // road samples
-    const n = LOOP / SAMPLE;
+    const nm = LOOP / SAMPLE, n = TOTAL / SAMPLE; // samples on the loop, then on the extension (a closed ring of its own)
+    this.nm = nm;
+    this.nxt = new Int32Array(n); this.prv = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      const lo = i < nm ? 0 : nm, hi = i < nm ? nm : n;
+      this.nxt[i] = i + 1 === hi ? lo : i + 1;
+      this.prv[i] = i === lo ? hi - 1 : i - 1;
+    }
     this.sx = new Float32Array(n); this.sz = new Float32Array(n); this.sy = new Float32Array(n);
     this.relief = new Float32Array(n); this.ground = new Float32Array(n * 3);
     const f = {};
@@ -211,8 +220,8 @@ export class TerrainField {
   /** Exact distance to the road within ~170 m: {dist, s, y, side}. Null when further away. */
   nearest(x, z) {
     const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
-    let best = Infinity, bs = 0, by = 0, bside = 0;
-    const SEGS = this.n;
+    let best = Infinity, bs = 0, by = 0, bside = 0, bring = 0;
+    let best0 = Infinity, y0 = 0, best1 = Infinity, y1 = 0; // closest point on each of the two roads (loop, extension)
     for (let r = 1; r <= 2; r++) {
       for (let ox = -r; ox <= r; ox++) {
         for (let oz = -r; oz <= r; oz++) {
@@ -221,7 +230,7 @@ export class TerrainField {
           for (let q = 0; q < list.length; q++) {
             const i = list[q];
             for (let w = 0; w < 2; w++) { // the two segments touching sample i
-              const a = (i - 1 + w + SEGS) % SEGS, b = (a + 1) % SEGS;
+              const a = w === 0 ? this.prv[i] : i, b = this.nxt[a];
               const ax = this.sx[a], az = this.sz[a];
               const ex = this.sx[b] - ax, ez = this.sz[b] - az;
               const l2 = ex * ex + ez * ez || 1;
@@ -229,8 +238,13 @@ export class TerrainField {
               t = t < 0 ? 0 : t > 1 ? 1 : t;
               const px = ax + ex * t, pz = az + ez * t;
               const d2 = (x - px) * (x - px) + (z - pz) * (z - pz);
+              const ring = a < this.nm ? 0 : 1;
+              if (ring === 0 ? d2 < best0 : d2 < best1) {
+                const yy = this.sy[a] + (this.sy[b] - this.sy[a]) * t;
+                if (ring === 0) { best0 = d2; y0 = yy; } else { best1 = d2; y1 = yy; }
+              }
               if (d2 < best) {
-                best = d2;
+                best = d2; bring = ring;
                 bs = a * SAMPLE + t * SAMPLE;
                 by = this.sy[a] + (this.sy[b] - this.sy[a]) * t;
                 bside = (x - px) * -ez + (z - pz) * ex; // >0 means left of travel in xz
@@ -243,6 +257,9 @@ export class TerrainField {
     }
     if (best === Infinity) return null;
     const o = this.near;
+    // where the two roads overlap (they share a surface there), stay under the lower of them
+    const other = bring === 0 ? best1 : best0, oy = bring === 0 ? y1 : y0;
+    if (other < 10 * 10) by = Math.min(by, oy);
     o.dist = Math.sqrt(best); o.s = bs; o.y = by; o.side = bside;
     return o;
   }
@@ -341,8 +358,13 @@ export function makeDetailTexture(noise) {
   return tex;
 }
 
-/** Build a terrain mesh over a rectangle. `sinkInside` (a rect) pushes the mesh down under another, finer mesh. */
-export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside = null, onProgress = null }) {
+/**
+ * Build a terrain mesh over a rectangle.
+ * `sinkInside` pushes the mesh down under another, finer mesh: a function (x, z) -> signed distance to the finer mesh's
+ * area (negative inside), or a rectangle. `cover` is the same kind of function and limits this mesh to the area where it
+ * is <= 0, so a fine mesh only spends vertices where it is needed.
+ */
+export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside = null, cover = null, onProgress = null }) {
   const nx = Math.ceil((x1 - x0) / cell) + 1;
   const nz = Math.ceil((z1 - z0) / cell) + 1;
   const count = nx * nz;
@@ -352,6 +374,21 @@ export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside
   const aux = { ground: new Float32Array(count * 3) };
   const noise = field.noise;
   const rowsPerChunk = 24;
+  const sinkDist = !sinkInside ? null : typeof sinkInside === 'function' ? sinkInside
+    : (x, z) => Math.max(sinkInside.x0 - x, x - sinkInside.x1, sinkInside.z0 - z, z - sinkInside.z1); // <0 inside
+
+  // which quads are drawn, and so which vertices are needed
+  const used = cover ? new Uint8Array(count) : null;
+  if (cover) {
+    const inside = new Uint8Array(count);
+    for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) inside[iz * nx + ix] = cover(x0 + ix * cell, z0 + iz * cell) <= 0 ? 1 : 0;
+    for (let iz = 0; iz < nz - 1; iz++) {
+      for (let ix = 0; ix < nx - 1; ix++) {
+        const a = iz * nx + ix;
+        if (inside[a] || inside[a + 1] || inside[a + nx] || inside[a + nx + 1]) used[a] = used[a + 1] = used[a + nx] = used[a + nx + 1] = 1;
+      }
+    }
+  }
 
   for (let iz = 0; iz < nz; iz++) {
     const z = z0 + iz * cell;
@@ -359,15 +396,13 @@ export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside
       const x = x0 + ix * cell;
       const i = iz * nx + ix;
       pos[i * 3] = x; pos[i * 3 + 2] = z;
+      uv[i * 2] = x * 0.045; uv[i * 2 + 1] = z * 0.045;
+      if (used && !used[i]) continue;
       let y = field.height(x, z);
-      if (sinkInside) { // inside the finer mesh's area, sink gently so only the fine mesh shows
-        const d = Math.max(sinkInside.x0 - x, x - sinkInside.x1, sinkInside.z0 - z, z - sinkInside.z1); // <0 inside
-        y -= 60 * (1 - sm(-200, 0, d));
-      }
+      if (sinkDist) y -= 60 * (1 - sm(-200, 0, sinkDist(x, z))); // inside the finer mesh's area, sink gently so only the fine mesh shows
       pos[i * 3 + 1] = y;
       field.grid(x, z, field.tmp);
       aux.ground[i * 3] = field.tmp.r; aux.ground[i * 3 + 1] = field.tmp.g; aux.ground[i * 3 + 2] = field.tmp.b;
-      uv[i * 2] = x * 0.045; uv[i * 2 + 1] = z * 0.045;
     }
     if (iz % rowsPerChunk === 0) { onProgress?.(iz / nz); await new Promise((r) => setTimeout(r, 0)); }
   }
@@ -376,18 +411,20 @@ export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside
   for (let iz = 0; iz < nz - 1; iz++) {
     for (let ix = 0; ix < nx - 1; ix++) {
       const a = iz * nx + ix, b = a + 1, c = a + nx, d = c + 1;
+      if (used && !(used[a] && used[b] && used[c] && used[d])) continue;
       idx.push(a, c, b, b, c, d);
     }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setIndex(idx.length > 65535 * 3 ? new THREE.BufferAttribute(new Uint32Array(idx), 1) : new THREE.BufferAttribute(new Uint16Array(idx), 1));
+  geo.setIndex(count > 65535 ? new THREE.BufferAttribute(new Uint32Array(idx), 1) : new THREE.BufferAttribute(new Uint16Array(idx), 1));
   geo.computeVertexNormals();
   const nrm = geo.attributes.normal.array;
 
   // colours from zone, slope and altitude
   const c3 = [0, 0, 0];
   for (let i = 0; i < count; i++) {
+    if (used && !used[i]) continue;
     const x = pos[i * 3], h = pos[i * 3 + 1], z = pos[i * 3 + 2];
     const ny = Math.max(0.05, nrm[i * 3 + 1]);
     const slope = Math.sqrt(Math.max(0, 1 - ny * ny)) / ny;

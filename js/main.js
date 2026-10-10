@@ -13,10 +13,13 @@ import { LoopbackSession, DemoPeers } from './net.js';
 import { initAudio, sfx, setMuted, isMuted } from './audio.js';
 import { ACHIEVEMENTS } from './achievements.js';
 import { LANDMARKS } from './course.js';
-import { buildFit, fitFileName, pickPlace, PLACES, MIN_SECONDS } from './export.js';
+import { DoubleClick } from './click.js';
+import { buildFit, fitFileName, PLACES, MIN_SECONDS } from './export.js';
 import { levelFor, levelTitle, xpForLevel, defaultHrLimits, cleanHrLimits } from './physics.js';
 
 window.__sqLoaded = true;
+// ?debug=1 exposes the running game on window.__sq, for poking at it from the console
+if (new URLSearchParams(location.search).has('debug')) Object.defineProperty(window, '__sq', { get: () => ({ game, renderer, mode }) });
 const $ = (id) => document.getElementById(id);
 
 // ---- persistence ------------------------------------------------------------------
@@ -231,7 +234,7 @@ async function connectDevice(kind, opts = {}) {
   if (opts.device) statusEl.textContent = `Looking for ${opts.device.name || 'your device'}…`;
   card.querySelector('[data-all]').hidden = true;
   try {
-    const emit = kind === 'click' ? (dir) => shiftGear(profile.clickSwap ? -dir : dir) : (f) => hub.push(f);
+    const emit = kind === 'click' ? onClickButton : (f) => hub.push(f);
     const link = await { trainer: connectTrainer, hr: connectHeartRate, click: connectClick }[kind](emit, ui, { all: opts.all ?? $('show-all').checked, device: opts.device });
     links[kind] = link;
     known[kind] = { id: link.device.id, name: link.name };
@@ -292,8 +295,24 @@ function showGear(flash = false) {
 }
 
 function shiftGear(dir) {
-  if (!ctlActive || !gears || profile.control !== 'gears') return;
-  if (gears.shift(dir)) { sfx('step'); showGear(true); }
+  if (!ctlActive || !gears || profile.control !== 'gears') return false;
+  if (gears.shift(dir)) { sfx('step'); showGear(true); return true; }
+  return false;
+}
+
+// A double click of the Zwift Click (either button, twice within a moment) takes or cancels the extension while the turn
+// point is in sight. The first press has already changed gear by then, so that shift is handed back: a double click
+// leaves your gear alone.
+const clicks = new DoubleClick();
+function onClickButton(dir) {
+  const step = profile.clickSwap ? -dir : dir;
+  const res = clicks.press(performance.now(), mode === 'ride' && game?.extension().state === 'approach');
+  if (res.double) {
+    if (res.undo) shiftGear(-res.undo);
+    game.toggleExtension();
+    return;
+  }
+  clicks.record(shiftGear(step) ? step : 0);
 }
 $('g-up').addEventListener('click', () => shiftGear(+1));
 $('g-down').addEventListener('click', () => shiftGear(-1));
@@ -335,13 +354,11 @@ function driveTrainer(dt) {
 // The file only ever exists in memory: it is dropped when the next ride starts, and never saved anywhere else.
 
 let fit = null; // { bytes, name, place } for the ride that just ended
-$('s-place').innerHTML = `<option value="random">random: Nemo or Bermuda</option>${PLACES.map((p) => `<option value="${p.id}">${p.name} (${p.note})</option>`).join('')}`;
 
-function makeFit(place, random = false) {
+function makeFit(place = PLACES[0]) {
   const ok = game && game.startedAt && game.samples.length >= MIN_SECONDS;
   fit = ok ? { bytes: buildFit({ samples: game.samples, startedAt: game.startedAt, place }), name: fitFileName(game.startedAt), place } : null;
   $('s-fit').hidden = !fit;
-  $('s-place').options[0].textContent = random ? `random: Nemo or Bermuda (this time: ${place.name})` : 'random: Nemo or Bermuda';
   $('m-fit').hidden = $('m-fit-note').hidden = !fit;
 }
 
@@ -355,10 +372,6 @@ function downloadFit() {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
   toast({ text: 'Downloaded', sub: `${fit.name}: placed at ${fit.place.name}`, kind: 'go' });
 }
-$('s-place').addEventListener('change', () => {
-  const v = $('s-place').value;
-  makeFit(v === 'random' ? pickPlace() : PLACES.find((p) => p.id === v), v === 'random');
-});
 $('s-fit-dl').addEventListener('click', downloadFit);
 $('m-fit').addEventListener('click', downloadFit);
 
@@ -411,8 +424,7 @@ function endRide() {
   $('hud').hidden = true;
   showSummary(game, game.levelAtStart, game.xpAtStart);
   $('summary').hidden = false;
-  $('s-place').value = 'random';
-  makeFit(pickPlace(), true);
+  makeFit();
 }
 
 function toMenu() {
@@ -441,6 +453,7 @@ addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft' || e.key === ',') { shiftGear(-1); e.preventDefault(); }
   }
   if (e.key === 'm') $('btn-mute').click();
+  if (e.key === 'e' && game) game.toggleExtension(); // take (or cancel) the extension when the turn point is near
   if (!sim || !useSim) return;
   const step = { ArrowUp: 10, ArrowDown: -10, PageUp: 50, PageDown: -50 }[e.key];
   if (step) { sim.offset += step; e.preventDefault(); }

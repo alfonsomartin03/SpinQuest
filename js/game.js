@@ -4,7 +4,8 @@ import {
   speedFromPower, gradeAt, elevation, START, SEGMENTS, LOOP,
   powerZone, hrZone, levelFor, clamp,
 } from './physics.js';
-import { LANDMARKS, BIOMES, biomeIndex } from './course.js';
+import { LANDMARKS, BIOMES, JUNCTION, TOTAL, SPUR_LEN, biomeIndex } from './course.js';
+import { placeOnLoop, advance, courseAt, gapBetween, roadX, sameStretch } from './route.js';
 import { workoutAt, totalDuration } from './workouts.js';
 import { RemoteRider, sanitizeState } from './net.js';
 import { ACHIEVEMENTS } from './achievements.js';
@@ -22,6 +23,11 @@ const BOTS = [
 export const IDLE_COAST = 1; // seconds of free-wheeling allowed
 export const IDLE_PAUSE = 3; // seconds without pedalling before the ride pauses
 const BRAKE = 2.4; // m/s^2
+
+/** The turn point: it is announced this far ahead, and the extension can be chosen from then until you reach it. */
+export const TURN_RANGE = 1000; // metres
+const PACK_FOLLOW = 25; // seconds after you take the extension during which the bunch behind you follows
+export const EXTENSION_BONUS = 150; // points for riding all of it
 
 export const ORB_SPACING = 9;
 const ORB_GROUP = 6;
@@ -42,10 +48,13 @@ let riderSeq = 1;
  * Every rider (you, bots, the coach, and later remote players) has the same shape, so the sidebar, the
  * 3D scene and the network code treat them alike. kind: 'you' | 'bot' | 'coach' | 'remote'.
  */
-const mkRider = (name, color, x, extra = {}) => ({
+const mkRider = (name, color, x, extra = {}) => placeOnLoop({
   id: `r${riderSeq++}`, kind: 'bot', lat: 0, name, color, x, v: 0, power: 0, p3: 0, hr: null, cad: 85, weight: 75, ftp: 200,
   crank: Math.random() * 6, wheel: 0, drag: 1, drafting: false, segStart: {}, segTimes: {}, ...extra,
-});
+}, x);
+
+/** Orders riders along the road; riders out on the extension sort among themselves (just behind the turn point). */
+const routeKey = (r) => roadX(r) + (r.spur ? (r.c - TOTAL) * 1e-4 : 0);
 
 const BOT_WEIGHTS = [58, 70, 62, 79, 68, 84];
 
@@ -82,7 +91,10 @@ export class Game {
     // live values
     this.pw = 0; this.p3 = 0; this.pSmooth = 0;
     this.cad = 0; this.hr = null;
-    this.grade = gradeAt(START);
+    this.spurIntent = false; // you have chosen to take the extension at the next turn point
+    this.packUntil = -1; // until this clock time the bunch follows you onto the extension
+    this.spurDone = 0; // extensions ridden to the end
+    this.grade = gradeAt(this.user.c);
     this.pz = 0; this.hz = -1;
 
     // stats
@@ -169,11 +181,12 @@ export class Game {
 
   #physics(dt) {
     const riders = [this.user, ...this.bots, ...this.#remoteRiders()];
-    const sorted = riders.slice().sort((a, b) => a.x - b.x);
+    const sorted = riders.slice().sort((a, b) => routeKey(a) - routeKey(b));
     sorted.forEach((r, i) => {
       r.drag = 1;
       for (let j = i + 1; j < sorted.length; j++) {
-        const gap = sorted[j].x - r.x;
+        if (!sameStretch(r, sorted[j])) continue;
+        const gap = gapBetween(r, sorted[j]);
         if (gap > 9) break;
         if (gap > 0.6) { r.drag = 0.65 + 0.35 * (gap / 9); break; }
       }
@@ -185,8 +198,8 @@ export class Game {
     else this.#advance(u, this.pSmooth, this.mass, dt);
     u.cad = this.cad;
     u.crank += (this.cad / 60) * Math.PI * 2 * dt;
-    this.grade = gradeAt(u.x);
-    this.elev = elevation(u.x);
+    this.grade = gradeAt(u.c);
+    this.elev = elevation(u.c);
     this.speed = u.v;
 
     if (this.coach) {
@@ -196,23 +209,78 @@ export class Game {
       if (this.paused) this.#brake(c, dt);
       else this.#advance(c, target, c.mass, dt);
       c.x = clamp(c.x, u.x - 60, u.x + 60);
+      this.#followUser(c);
       c.cad = 88;
       c.crank += (88 / 60) * Math.PI * 2 * dt;
       c.p3 += (c.power - c.p3) * (1 - Math.exp(-dt / 3));
     }
   }
 
+  /** Ride `dx` metres: the odometer counts them all, the rider's place on the course follows the road they are on. */
+  #move(r, dx) {
+    r.x += dx;
+    if (r === this.coach || r.kind === 'remote' || dx <= 0) return;
+    const take = r === this.user ? () => this.spurIntent : () => this.clock <= this.packUntil;
+    for (const ev of advance(r, dx, take)) this.#turnEvent(r, ev);
+  }
+
+  /** The coach rides your route, a few metres from you. */
+  #followUser(c) {
+    const u = this.user;
+    c.c = courseAt(u, c.x - u.x, this.spurIntent);
+    c.spur = c.c >= LOOP;
+    c.laps = u.laps + (!c.spur && !u.spur ? (c.c < u.c - 5000 ? 1 : c.c > u.c + 5000 ? -1 : 0) : 0);
+  }
+
+  #turnEvent(r, ev) {
+    if (!r.isUser) return;
+    if (ev === 'enter') {
+      this.spurIntent = false;
+      this.packUntil = this.clock + PACK_FOLLOW;
+      this.#toast('PRAIRIE FLATS', '10 km of flat road ahead', 'zone');
+      this.#sfx('segment');
+    } else if (ev === 'pass') {
+      this.spurIntent = false;
+      this.#toast('Staying on the loop', 'Turn point passed', 'info');
+    } else if (ev === 'exit') {
+      this.spurDone++;
+      this.#award(EXTENSION_BONUS);
+      this.#toast('EXTENSION COMPLETE', `Back on the loop  ·  +${EXTENSION_BONUS * this.mult}`, 'win');
+      this.#sfx('win');
+    }
+  }
+
+  /** Where you are relative to the turn point, for the HUD and the controls. */
+  extension() {
+    const u = this.user;
+    if (u.spur) return { state: 'on', done: u.c - LOOP, left: TOTAL - u.c, length: SPUR_LEN, armed: false };
+    const toTurn = u.c < JUNCTION ? JUNCTION - u.c : Infinity;
+    return { state: toTurn <= TURN_RANGE ? 'approach' : 'far', toTurn, armed: this.spurIntent, length: SPUR_LEN };
+  }
+
+  /** Choose (or un-choose) the extension; only possible once the turn point is announced. Returns the new choice. */
+  toggleExtension(want = !this.spurIntent) {
+    const e = this.extension();
+    if (e.state !== 'approach') return this.spurIntent;
+    if (want !== this.spurIntent) {
+      this.spurIntent = want;
+      this.#toast(want ? 'EXTENSION ON' : 'Extension off', want ? 'Turn right at the turn point  ·  +10 km flat' : 'Staying on the loop', want ? 'go' : 'info');
+      this.#sfx('step');
+    }
+    return this.spurIntent;
+  }
+
   #brake(r, dt) {
     r.v = Math.max(0, r.v - BRAKE * dt);
-    r.x += r.v * dt;
+    this.#move(r, r.v * dt);
     r.wheel += (r.v / 0.36) * dt;
     r.power = 0;
   }
 
   #advance(r, power, mass, dt) {
-    const vt = speedFromPower(power, gradeAt(r.x), mass, r.drag);
+    const vt = speedFromPower(power, gradeAt(r.c), mass, r.drag);
     r.v += (vt - r.v) * (1 - Math.exp(-dt / 1.6));
-    r.x += r.v * dt;
+    this.#move(r, r.v * dt);
     r.wheel += (r.v / 0.36) * dt;
     r.power = power;
   }
@@ -225,8 +293,9 @@ export class Game {
         b.attackUntil = this.clock + 10 + Math.random() * 8;
         b.nextAttack = this.clock + 80 + Math.random() * 90;
       }
-      if (this.clock < b.attackUntil && Math.abs(b.x - this.user.x) < 60) p *= 1.45;
-      p *= 1 - clamp((b.x - this.user.x) / 1500, -0.2, 0.2); // keep the pack in play
+      const gap = gapBetween(this.user, b);
+      if (this.clock < b.attackUntil && Math.abs(gap) < 60) p *= 1.45;
+      p *= 1 - clamp(gap / 1500, -0.2, 0.2); // keep the pack in play
       this.#advance(b, p, b.mass, dt);
       b.cad = clamp(80 + 25 * (p / ftp - 0.7), 65, 105);
       b.crank += (b.cad / 60) * Math.PI * 2 * dt;
@@ -269,6 +338,7 @@ export class Game {
     for (const { rider: r, net } of this.remotes.values()) {
       const st = net.sample(this.clock * 1000);
       if (!st) continue;
+      placeOnLoop(r, st.x); // remote riders always ride the loop
       r.x = st.x; r.lat = st.lat; r.v = st.speed; r.power = st.power; r.cad = st.cad; r.hr = st.hr;
       r.weight = st.weight; r.ftp = st.ftp; r.name = st.name; r.color = st.color;
       r.p3 += (st.power - r.p3) * (1 - Math.exp(-dt / 3));
@@ -297,9 +367,9 @@ export class Game {
   #segments() {
     const riders = [this.user, ...this.bots, ...this.#remoteRiders()];
     for (const r of riders) {
-      const phase = ((r.x % LOOP) + LOOP) % LOOP;
+      const phase = r.c;
       for (const s of SEGMENTS) {
-        const inside = phase >= s.start && phase < s.end;
+        const inside = !r.spur && phase >= s.start && phase < s.end;
         const was = r.segStart[s.id] != null;
         if (inside && !was) {
           r.segStart[s.id] = this.clock;
@@ -315,8 +385,8 @@ export class Game {
         }
       }
     }
-    const phase = ((this.user.x % LOOP) + LOOP) % LOOP;
-    const s = SEGMENTS.find((q) => phase >= q.start && phase < q.end);
+    const phase = this.user.c;
+    const s = this.user.spur ? null : SEGMENTS.find((q) => phase >= q.start && phase < q.end);
     this.curSeg = s
       ? { seg: s, progress: (phase - s.start) / (s.end - s.start), elapsed: this.clock - (this.user.segStart[s.id] ?? this.clock) }
       : null;
@@ -337,15 +407,17 @@ export class Game {
 
   /** Zone changes and landmark discoveries. */
   #world() {
-    const phase = ((this.user.x % LOOP) + LOOP) % LOOP;
+    const phase = this.user.c;
     const bi = biomeIndex(phase);
     if (bi !== this.biome) {
       this.biome = bi;
       this.#toast(BIOMES[bi].name.toUpperCase(), BIOMES[bi].blurb, 'zone');
     }
     for (const lm of LANDMARKS) {
+      const lmSpur = lm.d >= LOOP;
       let d = Math.abs(phase - lm.d);
-      d = Math.min(d, LOOP - d);
+      if (lmSpur !== this.user.spur) d = Infinity; // landmarks on the extension are only reachable from it
+      else if (!lmSpur) d = Math.min(d, LOOP - d);
       const near = d < 35;
       if (near && !this.nearLm.has(lm.id)) {
         this.nearLm.add(lm.id);
@@ -378,7 +450,7 @@ export class Game {
   }
 
   #everySecond() {
-    this.samples.push({ p: this.secN ? this.secP / this.secN : 0, hr: this.secHr || null, cad: this.cadMeasured, v: this.user.v, d: this.distance });
+    this.samples.push({ p: this.secN ? this.secP / this.secN : 0, hr: this.secHr || null, cad: this.cadMeasured, v: this.user.v, d: this.distance, c: this.user.c });
     this.secP = 0; this.secN = 0;
     const last5 = this.samples.slice(-5);
     if (last5.length === 5) this.maxP5 = Math.max(this.maxP5, last5.reduce((a, s) => a + s.p, 0) / 5);
@@ -470,11 +542,11 @@ export class Game {
   board() {
     return this.allRiders()
       .map((r) => {
-        const gap = r.x - this.user.x;
+        const gap = r === this.user ? 0 : gapBetween(this.user, r);
         const chaser = gap > 0 ? this.user.v : r.v;
         return { r, gap, gapSec: gap / Math.max(3, chaser) };
       })
-      .sort((a, b) => b.r.x - a.r.x);
+      .sort((a, b) => b.gap - a.gap || routeKey(b.r) - routeKey(a.r));
   }
 
   summary() {
@@ -494,6 +566,7 @@ export class Game {
       zonePow: this.zonePow,
       zoneHr: this.zoneHr,
       samples: this.samples,
+      extensions: this.spurDone,
       unlocked: this.unlocked,
       discovered: this.discoveredNow,
       workout: this.workout,

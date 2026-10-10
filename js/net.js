@@ -10,7 +10,7 @@
 //    can't push NaNs or teleport. A real server should also check plausibility (speed vs power) before
 //    relaying.
 
-import { speedFromPower, gradeAt } from './physics.js';
+import { speedFromPower, gradeAt, LOOP } from './physics.js';
 
 export const PROTOCOL_VERSION = 1;
 export const SEND_HZ = 10;
@@ -156,7 +156,7 @@ export class DemoPeers {
     for (const p of this.peers) {
       const w = (0.62 + 0.18 * Math.sin(t / 37 + p.ph) + (Math.sin(t / 9 + p.ph * 2) > 0.92 ? 0.35 : 0)) * p.ftp;
       p.power = Math.max(0, w);
-      p.speed = speedFromPower(p.power, gradeAt(p.x), p.weight + 9);
+      p.speed = speedFromPower(p.power, gradeAt(((p.x % LOOP) + LOOP) % LOOP), p.weight + 9);
       p.x += p.speed * dt;
       p.cad = 82 + 14 * Math.sin(t / 6 + p.ph);
       p.hr = 70 + (185 - 70) * Math.min(1, (p.power / p.ftp) ** 0.9) * 0.92;

@@ -8,10 +8,11 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { LOOP, TUNNEL, curvatureAt } from '../course.js';
+import { LOOP, JUNCTION, TUNNEL, curvatureAt } from '../course.js';
+import { courseAt } from '../route.js';
 import { POWER_ZONES, HR_ZONES, clamp } from '../physics.js';
 import { orbAt, ORB_SPACING } from '../game.js';
-import { frame, place, BOUNDS } from './geo.js';
+import { frame, place, BOUNDS, LOOP_BOUNDS } from './geo.js';
 import { TerrainField, buildTerrainMesh, makeDetailTexture } from './terrain.js';
 import { buildRoad } from './road.js';
 import { buildTunnel, buildBridge } from './structures.js';
@@ -22,7 +23,7 @@ import { buildLandmarks, landmarkPads } from './landmarks.js';
 import { RiderModel, makeNameTag, SKINS, HAIRS } from './riders.js';
 import { OrbField, Particles, AmbientParticles, FinalShader } from './effects.js';
 
-const wrap = (d) => ((d % LOOP) + LOOP) % LOOP;
+const FINE_R = 500; // metres either side of the extension that get the fine terrain mesh
 
 export const QUALITY = {
   low: { dpr: 1, shadow: 0, bloom: false, msaa: 0, draw: 0.55, ambient: 0.3 },
@@ -93,14 +94,19 @@ export class Renderer {
     await step(0.06, 'Shaping the land');
     const detail = makeDetailTexture(this.field.noise);
     const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: detail, roughness: 0.96, metalness: 0 });
-    const inner = { x0: BOUNDS.minX - 800, z0: BOUNDS.minZ - 800, x1: BOUNDS.maxX + 800, z1: BOUNDS.maxZ + 800 };
-    const innerGeo = await buildTerrainMesh(this.field, { ...inner, cell: 10, onProgress: (f) => onProgress(0.06 + f * 0.34, 'Shaping the land') });
+    // The fine mesh covers the loop's whole neighbourhood and, along the extension, only the land within FINE_R of the road.
+    const rect = (r) => (x, z) => Math.max(r.x0 - x, x - r.x1, r.z0 - z, z - r.z1); // signed distance to a rectangle
+    const loopArea = rect({ x0: LOOP_BOUNDS.minX - 800, z0: LOOP_BOUNDS.minZ - 800, x1: LOOP_BOUNDS.maxX + 800, z1: LOOP_BOUNDS.maxZ + 800 });
+    const tmp = {};
+    const fineDist = (x, z) => Math.min(loopArea(x, z), this.field.grid(x, z, tmp).dist - FINE_R);
+    const inner = { x0: BOUNDS.minX - FINE_R - 60, z0: BOUNDS.minZ - FINE_R - 60, x1: BOUNDS.maxX + FINE_R + 60, z1: BOUNDS.maxZ + FINE_R + 60 };
+    const innerGeo = await buildTerrainMesh(this.field, { ...inner, cell: 10, cover: fineDist, onProgress: (f) => onProgress(0.06 + f * 0.34, 'Shaping the land') });
     this.terrain = new THREE.Mesh(innerGeo, terrainMat);
     this.terrain.receiveShadow = true;
     this.terrain.castShadow = false;
     this.scene.add(this.terrain);
     await step(0.42, 'Raising the mountains');
-    const outerGeo = await buildTerrainMesh(this.field, { x0: -7000, z0: -9000, x1: 9000, z1: 7000, cell: 48, sinkInside: inner });
+    const outerGeo = await buildTerrainMesh(this.field, { x0: -7000, z0: -9000, x1: 9000, z1: 7000, cell: 48, sinkInside: fineDist });
     const outer = new THREE.Mesh(outerGeo, new THREE.MeshStandardMaterial({ vertexColors: true, map: detail, roughness: 0.97, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }));
     this.scene.add(outer);
 
@@ -258,7 +264,7 @@ export class Renderer {
   }
 
   #placeRider(r, entry, game, dt) {
-    const f = frame(r.x);
+    const f = frame(r.c);
     const lat = r.isUser ? r.lat : r.lat + Math.sin(game.clock * 0.35 + (r.i ?? 7)) * 0.25;
     const fwd = new THREE.Vector3(f.tx, f.grade, f.tz).normalize();
     let up = new THREE.Vector3(0, 1, 0);
@@ -266,7 +272,7 @@ export class Renderer {
     const right = new THREE.Vector3().crossVectors(fwd, up);
     const m = new THREE.Matrix4().makeBasis(fwd, up, right);
     const q = new THREE.Quaternion().setFromRotationMatrix(m);
-    const lean = clamp(Math.atan((r.v * r.v * curvatureAt(r.x)) / 9.81) * 0.7, -0.4, 0.4);
+    const lean = clamp(Math.atan((r.v * r.v * curvatureAt(r.c)) / 9.81) * 0.7, -0.4, 0.4);
     q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -lean));
     const g = entry.model.group;
     g.position.set(f.x + f.rx * lat, f.y, f.z + f.rz * lat);
@@ -319,13 +325,14 @@ export class Renderer {
     const targetH = 2.0 + sprint * 0.1;
     this.camH += (targetH - this.camH) * lag;
     const back = 5.4 + clamp(speed * 0.04, 0, 0.8);
-    const camPos = place(user.x - back, this.camLat, this.camH);
-    const look = place(user.x + 5, user.lat * 0.3, 0.55);
+    const ahead = (m) => courseAt(user, m, game.spurIntent); // the road m metres ahead of (+) or behind (-) you, along your route
+    const camPos = place(ahead(-back), this.camLat, this.camH);
+    const look = place(ahead(5), user.lat * 0.3, 0.55);
     this.camera.position.set(camPos.x, camPos.y, camPos.z);
     const shake = clamp(sprint * 0.012 + speed * 0.0006, 0, 0.02);
     this.camera.position.x += Math.sin(t * 31) * shake; this.camera.position.y += Math.sin(t * 27 + 1) * shake;
     this.camera.lookAt(look.x, look.y, look.z);
-    const bendLean = clamp(curvatureAt(user.x) * speed * 4.2, -0.12, 0.12);
+    const bendLean = clamp(curvatureAt(user.c) * speed * 4.2, -0.12, 0.12);
     this.camRoll += (bendLean - this.camRoll) * lag;
     this.camera.rotateZ(-this.camRoll);
     const fovT = 58 + clamp(speed * 0.5, 0, 14) + sprint * 3;
@@ -333,8 +340,8 @@ export class Renderer {
     if (Math.abs(this.camera.fov - this.fov) > 0.02) { this.camera.fov = this.fov; this.camera.updateProjectionMatrix(); }
 
     // sun, sky, fog: time of day follows the course
-    const ph = wrap(user.x);
-    this.sky.setProgress(ph / LOOP, um.position);
+    const ph = user.c; // on the extension the light stays where it was at the turn point
+    this.sky.setProgress(Math.min(ph, JUNCTION) / LOOP, um.position);
     this.sky.update(t);
     const st = this.sky.state;
     const inT = ph > TUNNEL.start - 2 && ph < TUNNEL.end + 2 ? 1 : 0;
@@ -362,16 +369,16 @@ export class Renderer {
     this.birds.userData.update(t, um.position);
 
     // orbs, bursts, sprint sparks
-    this.orbs.update(t, user.x, game.collected);
+    this.orbs.update(t, user.x, game.collected, (x) => ahead(x - user.x));
     for (const e of this.pending) {
       const o = orbAt(Math.floor(e.x / ORB_SPACING));
-      const p = place(e.x, o ? o.lat : 0, e.h + 0.3);
+      const p = place(ahead(e.x - user.x), o ? o.lat : 0, e.h + 0.3);
       this.particles.burst(p.x, p.y, p.z, e.gold ? [3.2, 2.2, 0.6] : [0.5, 1.4, 2.6], e.gold ? 46 : 22, e.gold ? 5.5 : 4, 0.3, 0.9);
     }
     this.pending.length = 0;
     const ratio = game.pSmooth / game.profile.ftp;
     if (ratio > 1.3 && !game.paused) {
-      const f = frame(user.x - 0.55);
+      const f = frame(ahead(-0.55));
       const c = ratio > 1.8 ? [2.6, 0.7, 3.2] : [3.0, 1.5, 0.4];
       for (let i = 0; i < 3; i++) this.particles.spawn(f.x + f.rx * user.lat, f.y + 0.12, f.z + f.rz * user.lat, -f.tx * 3 + (Math.random() - 0.5) * 2.5, 1 + Math.random() * 2.5, -f.tz * 3 + (Math.random() - 0.5) * 2.5, c, 0.1 + Math.random() * 0.12, 0.45, 9);
     }

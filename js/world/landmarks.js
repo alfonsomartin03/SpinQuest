@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LOOP, LANDMARKS, SEGMENTS } from '../course.js';
+import { LOOP, JUNCTION, SPUR_LEN, LANDMARKS, SEGMENTS } from '../course.js';
 import { frame, place } from './geo.js';
 import { LAKE, lakeR } from './terrain.js';
 import { makeSign, makeStone, makeRoofTiles, makeWood } from './textures.js';
@@ -413,10 +413,10 @@ function gantry(text, color, { chequer = false, bunting = true, height = 7.2, wi
   return g;
 }
 
-function kmSign(km) {
+function kmSign(km, label = `${km} km`) {
   const g = new THREE.Group();
   box(g, 0.1, 2.4, 0.1, 0, 1.2, 0, '#9aa0aa', { metal: 0.5 });
-  const s = makeSign(`${km} km`, { w: 256, h: 128, bg: '#fafaf6', fg: '#1b2330', border: '#d8333f', size: 0.5, round: 14 });
+  const s = makeSign(label, { w: 256, h: 128, bg: '#fafaf6', fg: '#1b2330', border: '#d8333f', size: 0.5, round: 14 });
   for (const ry of [0, Math.PI]) {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), new THREE.MeshStandardMaterial({ map: s.texture, roughness: 0.5 }));
     p.position.set(0, 2.2, ry ? -0.07 : 0.07); p.rotation.y = ry; g.add(p);
@@ -512,12 +512,16 @@ export function buildLandmarks(field) {
   }
   // kilometre markers
   for (let k = 1; k < 10; k++) placeObj(kmSign(k), k * 1000, 8.4);
+  // the turn point, and the extension's own kilometre markers
+  placeObj(gantry('TURN POINT  ·  +10 KM FLAT', '#14a89a', { bunting: false, height: 6.8, width: 7.4 }), JUNCTION - 130, 0, { yawFrom: 'along' });
+  for (let k = 1; k < SPUR_LEN / 1000; k++) placeObj(kmSign(k, `+${k} km`), LOOP + k * 1000, 8.4);
 
   // cheering crowds
   const crowd = buildCrowd([
     { d0: -30, d1: 30, step: 2.6, latMin: 6.4, latMax: 10.5, p: 0.95 },
     { d0: 4560, d1: 4650, step: 2.6, latMin: 6.4, latMax: 10, p: 0.95 },
     { d0: 8480, d1: 8960, step: 6.5, latMin: 6.4, latMax: 10, p: 0.7 },
+    { d0: JUNCTION - 190, d1: JUNCTION - 90, step: 5, latMin: 8.5, latMax: 13, p: 0.55 },
     { d0: 2290, d1: 2320, step: 4, latMin: 6.6, latMax: 9, p: 0.6 },
     { d0: 7640, d1: 7660, step: 4, latMin: 6.6, latMax: 9, p: 0.6 },
   ], field);

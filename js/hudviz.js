@@ -1,7 +1,7 @@
 // Drawing for the map, the climb profile and the elevation strip. Pure canvas, no DOM lookups, so it is
 // easy to test and restyle. The look is deliberately sober: dark slate, thin lines, vector glyphs.
 
-import { LOOP, MAP, LANDMARKS, BIOMES, SEGMENTS, LAKE_SHAPE, elevation, gradeAt, posAt, headingAt } from './course.js';
+import { LOOP, TOTAL, SPUR_LEN, JUNCTION, MAP, SPUR_MAP, LANDMARKS, BIOMES, SEGMENTS, LAKE_SHAPE, elevation, gradeAt, posAt, headingAt } from './course.js';
 
 // ---- shared palette -------------------------------------------------------------------------------------------
 
@@ -62,7 +62,7 @@ export function glyph(ctx, kind, x, y, r, found) {
 function traceRoute(ctx, P, from, to) {
   ctx.beginPath();
   let first = true;
-  for (const p of MAP.pts) {
+  for (const p of from >= LOOP ? SPUR_MAP.pts : MAP.pts) {
     if (p.d < from - 12.5 || p.d > to + 12.5) continue;
     const [x, y] = P(p.x, p.y);
     first ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
@@ -84,11 +84,12 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   const pad = 46;
-  const fit = Math.min((w - pad * 2) / (MAP.maxX - MAP.minX), (h - pad * 2) / (MAP.maxY - MAP.minY));
-  const me = posAt(game.user.x);
+  const B = SPUR_MAP; // the whole course, loop and extension
+  const fit = Math.min((w - pad * 2) / (B.maxX - B.minX), (h - pad * 2) / (B.maxY - B.minY));
+  const me = posAt(game.user.c);
   const s = zoom ? fit * 3.4 : fit;
-  const cx = zoom ? me.x : (MAP.minX + MAP.maxX) / 2;
-  const cy = zoom ? me.y : (MAP.minY + MAP.maxY) / 2;
+  const cx = zoom ? me.x : (B.minX + B.maxX) / 2;
+  const cy = zoom ? me.y : (B.minY + B.maxY) / 2;
   const P = (x, y) => [w / 2 + (x - cx) * s, h / 2 - (y - cy) * s];
   const k = s / fit; // line-weight scale when zoomed
   const wt = (v) => v * Math.min(1.7, 0.55 + k * 0.45);
@@ -127,6 +128,13 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     traceRoute(ctx, P, sg.start, sg.end);
     ctx.strokeStyle = sg.color; ctx.globalAlpha = 0.5; ctx.lineWidth = wt(12); ctx.stroke(); ctx.globalAlpha = 1;
   }
+  // the extension: a dashed route off the turn point and back to it
+  const ext = game.extension();
+  traceRoute(ctx, P, LOOP, TOTAL);
+  ctx.strokeStyle = '#03060b'; ctx.lineWidth = wt(8.5); ctx.stroke();
+  traceRoute(ctx, P, LOOP, TOTAL);
+  ctx.strokeStyle = ext.state === 'on' || ext.armed ? '#3ee0cf' : 'rgba(62,224,207,0.62)'; ctx.lineWidth = wt(4.2);
+  ctx.setLineDash([wt(9), wt(6)]); ctx.stroke(); ctx.setLineDash([]);
   // route: casing then grade-coloured line
   traceRoute(ctx, P, 0, LOOP);
   ctx.strokeStyle = '#03060b'; ctx.lineWidth = wt(8.5); ctx.stroke();
@@ -148,6 +156,28 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
     ctx.beginPath(); ctx.moveTo(-2.4, -3); ctx.lineTo(1.6, 0); ctx.lineTo(-2.4, 3); ctx.stroke();
     ctx.restore();
+  }
+  for (let d = LOOP + 500; d < TOTAL; d += 1000) {
+    const a = posAt(d), b = posAt(d + 12);
+    const [x, y] = P(a.x, a.y), [x2, y2] = P(b.x, b.y);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(y2 - y, x2 - x));
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath(); ctx.moveTo(-2.4, -3); ctx.lineTo(1.6, 0); ctx.lineTo(-2.4, 3); ctx.stroke();
+    ctx.restore();
+  }
+  // the turn point
+  {
+    const a = posAt(JUNCTION), [x, y] = P(a.x, a.y);
+    const pulse = ext.state === 'approach' ? 0.5 + 0.5 * Math.sin(game.clock * 5) : 0;
+    ctx.beginPath(); ctx.arc(x, y, (zoom ? 8 : 6.5) + pulse * 3, 0, 7);
+    ctx.fillStyle = ext.armed ? '#3ee0cf' : 'rgba(14,21,34,0.92)'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = '#3ee0cf'; ctx.stroke();
+    ctx.fillStyle = ext.armed ? '#05211e' : '#3ee0cf'; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('+', x, y + 0.5);
+    if (zoom || ext.state !== 'far') {
+      ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(180,244,236,0.95)'; ctx.font = '700 10px system-ui, sans-serif';
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText('Turn point  +10 km', x + 12, y - 9); ctx.fillText('Turn point  +10 km', x + 12, y - 9);
+    }
   }
   ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (let km = 1; km < 10; km++) {
@@ -181,7 +211,7 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
   // riders: the others as dots, selected one labelled, you as a heading arrow
   for (const { r } of game.board().slice().reverse()) {
     if (r.isUser) continue;
-    const q = posAt(r.x);
+    const q = posAt(r.c);
     const [x, y] = P(q.x, q.y);
     const sel = r.id === selectedId;
     ctx.beginPath(); ctx.arc(x, y, sel ? 5.6 : 4, 0, 7);
@@ -193,7 +223,7 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     }
   }
   const [ux, uy] = P(me.x, me.y);
-  const head = headingAt(game.user.x);
+  const head = headingAt(game.user.c);
   const pulse = (game.clock * 0.9) % 1;
   ctx.beginPath(); ctx.arc(ux, uy, 8 + pulse * 14, 0, 7);
   ctx.strokeStyle = `rgba(120,190,255,${0.5 * (1 - pulse)})`; ctx.lineWidth = 1.5; ctx.stroke();
@@ -276,17 +306,25 @@ export function drawStrip(canvas, game) {
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   const pad = 16;
-  const X = (d) => pad + ((((d % LOOP) + LOOP) % LOOP) / LOOP) * (w - pad * 2);
-  if (!drawStrip.cache) {
+  const spur = game.user.spur; // the strip shows the stretch you are on: the loop, or the extension
+  const base = spur ? LOOP : 0, len = spur ? SPUR_LEN : LOOP;
+  const X = (c) => pad + ((c - base) / len) * (w - pad * 2);
+  drawStrip.cache ||= {};
+  const cacheKey = spur ? 'spur' : 'loop';
+  if (!drawStrip.cache[cacheKey]) {
     const pts = [];
-    for (let d = 0; d <= LOOP; d += 40) pts.push([d, elevation(d)]);
-    drawStrip.cache = { pts, min: Math.min(...pts.map((p) => p[1])), max: Math.max(...pts.map((p) => p[1])) };
+    for (let d = 0; d <= len; d += 40) pts.push([base + Math.min(d, len - 1e-6), elevation(base + Math.min(d, len - 1e-6))]);
+    const lo = Math.min(...pts.map((p) => p[1])), hi = Math.max(...pts.map((p) => p[1]));
+    drawStrip.cache[cacheKey] = { pts, min: spur ? lo - 6 : lo, max: spur ? Math.max(hi, lo + 24) : hi }; // keep a flat road looking flat
   }
-  const { pts, min, max } = drawStrip.cache;
+  const { pts, min, max } = drawStrip.cache[cacheKey];
   const top = 30, bottom = h - 14;
   const Y = (el) => bottom - ((el - min) / (max - min)) * (bottom - top);
   // zone colours along the base
-  for (const b of BIOMES) { ctx.fillStyle = `rgba(${b.ground.map(Math.round).join(',')},0.8)`; ctx.fillRect(X(b.start), bottom + 3, X(b.end) - X(b.start), 4); }
+  for (const b of BIOMES) {
+    if ((b.start >= LOOP) !== spur) continue;
+    ctx.fillStyle = `rgba(${b.ground.map(Math.round).join(',')},0.8)`; ctx.fillRect(X(b.start), bottom + 3, X(b.end) - X(b.start), 4);
+  }
   // profile area and a grade-coloured ridge line
   ctx.beginPath(); ctx.moveTo(pad, bottom + 1);
   for (const [d, el] of pts) ctx.lineTo(X(d), Y(el));
@@ -301,17 +339,28 @@ export function drawStrip(canvas, game) {
   }
   // km ticks
   ctx.fillStyle = 'rgba(160,176,198,0.7)'; ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center';
-  for (let km = 0; km <= 10; km += 2) ctx.fillText(String(km), X(km * 1000), h - 1);
+  for (let km = 0; km <= 10; km += 2) ctx.fillText(String(km), X(base + km * 1000), h - 1);
+  // the turn point, on the loop's strip
+  if (!spur) {
+    const x = X(JUNCTION), armed = game.spurIntent;
+    ctx.strokeStyle = armed ? '#3ee0cf' : 'rgba(62,224,207,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([2, 3]);
+    ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, bottom + 2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = armed ? '#3ee0cf' : 'rgba(62,224,207,0.9)'; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('+10 km ↱', x - 4, top - 6);
+  }
   // landmarks
   const found = game.progress.discovered;
-  for (const lm of LANDMARKS) glyph(ctx, lm.kind, X(lm.d), Math.max(11, Y(elevation(lm.d)) - 10), 6, !!found[lm.id]);
+  for (const lm of LANDMARKS) {
+    if ((lm.d >= LOOP) !== spur) continue;
+    glyph(ctx, lm.kind, X(lm.d), Math.max(11, Y(elevation(lm.d)) - 10), 6, !!found[lm.id]);
+  }
   // riders and you
   for (const { r } of game.board().slice().reverse()) {
-    if (r.isUser) continue;
-    ctx.beginPath(); ctx.arc(X(r.x), Y(elevation(r.x)), 3, 0, 7);
+    if (r.isUser || r.spur !== spur) continue;
+    ctx.beginPath(); ctx.arc(X(r.c), Y(elevation(r.c)), 3, 0, 7);
     ctx.fillStyle = r.kind === 'coach' ? '#ffd400' : r.color; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#05080d'; ctx.stroke();
   }
-  const ux = X(game.user.x), uy = Y(elevation(game.user.x));
+  const ux = X(game.user.c), uy = Y(elevation(game.user.c));
   ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(ux, top - 2); ctx.lineTo(ux, bottom); ctx.stroke();
   ctx.beginPath(); ctx.arc(ux, uy, 5, 0, 7); ctx.fillStyle = '#ff3b6b'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();

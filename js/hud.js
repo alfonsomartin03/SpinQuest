@@ -3,7 +3,7 @@
 import {
   POWER_ZONES, HR_ZONES, LOOP, elevation, powerZone, levelFor, levelTitle, xpForLevel, fmtTime, clamp,
 } from './physics.js';
-import { LANDMARKS, BIOMES, CLIMBS, activeClimb, climbSplits } from './course.js';
+import { LANDMARKS, BIOMES, CLIMBS, LOOP as LOOP_LEN, activeClimb, climbSplits, biomeIndex } from './course.js';
 import { drawMap, drawClimbProfile, drawStrip, gradeColor as gradeColorImport } from './hudviz.js';
 import { totalDuration } from './workouts.js';
 import { ACHIEVEMENTS } from './achievements.js';
@@ -77,7 +77,7 @@ export class Hud {
     for (const id of ['h-power', 'h-pzone', 'h-zonebar', 'h-cad', 'h-hr', 'h-hrz', 'h-speed', 'h-wkg', 'h-time', 'h-dist', 'h-grade', 'h-kj',
       'h-draft', 'h-pause', 'h-board', 'h-mini', 'h-seg', 'h-seg-name', 'h-seg-bar', 'h-seg-time', 'h-score', 'h-mult', 'h-multbar',
       'h-level', 'h-xpbar', 'h-step', 'h-next', 'h-target', 'h-twatts', 'h-remain', 'h-graph', 'h-wait', 'h-sim', 'h-map', 'h-mapnote', 'h-zone', 'h-mapbox', 'h-board-count', 'h-rcard', 'h-climb', 'c-name', 'c-sub', 'c-left', 'c-elev', 'c-avg',
-      'c-now', 'c-next', 'c-vam', 'c-eta', 'c-top', 'c-steep', 'c-profile']) this.el[id] = $(id);
+      'c-now', 'c-next', 'c-vam', 'c-eta', 'c-top', 'c-steep', 'c-profile', 'h-turn', 'h-turn-title', 'h-turn-sub', 'h-turn-btn', 'h-turn-hint', 'h-turn-bar']) this.el[id] = $(id);
     this.selectedId = null;
     this.vamBuf = [];
     this.spd = 0;
@@ -96,6 +96,7 @@ export class Hud {
     this.el['h-zonebar'].innerHTML = POWER_ZONES.map(() => '<i></i>').join('');
     this.zoneBars = [...this.el['h-zonebar'].children];
     POWER_ZONES.forEach((z, i) => { this.zoneBars[i].style.background = z.color; });
+    this.el['h-turn-btn'].addEventListener('click', () => this.game?.toggleExtension());
     this.lastBeat = -1;
     this.lastMult = 1;
     this.graphAt = 0;
@@ -104,6 +105,7 @@ export class Hud {
 
   update(game, simActive) {
     const e = this.el;
+    this.game = game;
     const { ftp, weight, maxHr } = game.profile;
     setText(e['h-power'], String(Math.round(game.p3)));
     const z = POWER_ZONES[powerZone(game.p3, ftp)];
@@ -156,6 +158,7 @@ export class Hud {
     this.#workout(game);
     if (game.clock - this.boardAt > 0.2) { this.boardAt = game.clock; this.#board(game); }
     this.#segment(game);
+    this.#turn(game);
     this.#climb(game);
     if (game.clock - this.vizAt > 0.066) { // the map and strip don't need 60 fps
       this.vizAt = game.clock;
@@ -276,22 +279,51 @@ export class Hud {
   }
 
   #zone(game) {
-    const phase = ((game.user.x % LOOP) + LOOP) % LOOP;
-    const bi = BIOMES.findIndex((b) => phase >= b.start && phase < b.end);
+    const u = game.user;
+    const phase = u.c;
+    const bi = biomeIndex(phase);
+    // the next landmark on the stretch of road you are on
     let best = null;
     for (const lm of LANDMARKS) {
-      const dist = (lm.d - phase + LOOP) % LOOP;
+      if ((lm.d >= LOOP_LEN) !== u.spur) continue;
+      const dist = u.spur ? lm.d - phase : (lm.d - phase + LOOP_LEN) % LOOP_LEN;
       if (dist > 15 && (!best || dist < best.dist)) best = { lm, dist };
     }
     const found = best && game.progress.discovered[best.lm.id];
     const dTxt = best ? (best.dist < 1000 ? `${Math.round(best.dist / 10) * 10} m` : `${(best.dist / 1000).toFixed(1)} km`) : '';
-    setText(this.el['h-zone'], `${BIOMES[bi].name} · ${Math.round(elevation(game.user.x))} m${best ? `   ·   Next: ${found ? best.lm.name : 'unknown landmark'} in ${dTxt}` : ''}`);
+    setText(this.el['h-zone'], `${BIOMES[bi].name} · ${Math.round(elevation(phase))} m${best ? `   ·   Next: ${found ? best.lm.name : 'unknown landmark'} in ${dTxt}` : ''}`);
+  }
+
+  /** The turn point: announced a kilometre out, with a button (or a double click of the Zwift Click) to take the extension. */
+  #turn(game) {
+    const e = this.el;
+    const x = game.extension();
+    e['h-turn'].hidden = x.state === 'far';
+    if (x.state === 'far') return;
+    const box = e['h-turn'];
+    box.classList.toggle('armed', !!x.armed);
+    box.classList.toggle('on', x.state === 'on');
+    if (x.state === 'on') {
+      setText(e['h-turn-title'], 'Prairie Flats');
+      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go, then back on the loop`);
+      e['h-turn-btn'].hidden = true;
+      e['h-turn-hint'].hidden = true;
+      e['h-turn-bar'].style.width = `${(x.done / x.length) * 100}%`;
+      return;
+    }
+    const m = Math.max(0, Math.round(x.toTurn / 10) * 10);
+    setText(e['h-turn-title'], x.armed ? `Extension ON · turn point in ${m} m` : `Turn point in ${m} m`);
+    setText(e['h-turn-sub'], x.armed ? 'You will bear right onto 10 km of flat road' : 'Add 10 km of flat road, or stay on the loop');
+    setText(e['h-turn-btn'], x.armed ? 'Cancel' : 'Take the extension');
+    e['h-turn-btn'].hidden = false;
+    e['h-turn-hint'].hidden = false;
+    e['h-turn-bar'].style.width = `${(1 - x.toTurn / 1000) * 100}%`;
   }
 
   /** Distance left, elevation left and gradient information while on (or about to start) a climb. */
   #climb(game) {
     const e = this.el;
-    const act = activeClimb(game.user.x);
+    const act = activeClimb(game.user.c);
     e['h-climb'].hidden = !act;
     if (!act) { this.vamBuf.length = 0; return; }
     const { climb, stats: st } = act;
@@ -362,6 +394,7 @@ export function showSummary(game, levelBefore, xpBefore) {
     stat(sum.maxHr ? sum.maxHr + ' bpm' : '--', 'Max HR'),
     stat(Math.round(sum.kj) + ' kJ', 'Work'),
     stat(sum.score.toLocaleString(), 'Points'),
+    ...(sum.extensions ? [stat(`${sum.extensions} × 10 km`, 'Flat extension')] : []),
   ].join('');
 
   const canvas = $('s-chart');

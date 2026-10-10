@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LOOP, SEGMENTS, TUNNEL, BRIDGE, curvatureAt } from '../course.js';
+import { LOOP, TOTAL, SEGMENTS, TUNNEL, BRIDGE, curvatureAt } from '../course.js';
 import { frame } from './geo.js';
 import { makeAsphalt, makeChevron } from './textures.js';
 
@@ -82,12 +82,18 @@ export function buildRoad({ anisotropy = 8 } = {}) {
     map, bumpMap: bump, bumpScale: 1.2, roughness: 0.92, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
   // the deck of the covered bridge replaces the road between its abutments
-  const pieces = [[0, BRIDGE.x - BRIDGE.half], [BRIDGE.x + BRIDGE.half, LOOP]];
+  const pieces = [[0, BRIDGE.x - BRIDGE.half], [BRIDGE.x + BRIDGE.half, LOOP - 1e-3]];
   for (const [a, b] of pieces) {
     const m = new THREE.Mesh(ribbon(a, b, { y: 0.02 }), mat);
     m.receiveShadow = true;
     group.add(m);
   }
+  // the extension: where it shares the road with the loop at the turn point its surface wins, so the two never flicker
+  const spurMat = mat.clone();
+  spurMat.polygonOffsetFactor = spurMat.polygonOffsetUnits = -4;
+  const spur = new THREE.Mesh(ribbon(LOOP, TOTAL, { y: 0.02 }), spurMat);
+  spur.receiveShadow = true;
+  group.add(spur);
 
   // painted segment bands along both shoulders
   for (const s of SEGMENTS) {
@@ -104,7 +110,7 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   const postMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
   const polesGeo = mergeGeometries([box(0.09, 2.3, 0.09, 0, 1.15, 0, '#f4f4f2'), box(0.095, 0.5, 0.095, 0, 2.05, 0, '#d8322d'), box(0.1, 0.12, 0.1, 0, 1.35, 0, '#d8322d')]);
   const posts = [], poles = [];
-  for (let d = 12; d < LOOP; d += 24) {
+  for (let d = 12; d < TOTAL; d += 24) {
     const inTunnel = d > TUNNEL.start - 12 && d < TUNNEL.end + 12;
     const onBridge = Math.abs(d - BRIDGE.x) < 20;
     if (inTunnel || onBridge) continue;
@@ -126,7 +132,7 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   const stickGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.7, 6);
   stickGeo.translate(0, 0.85, 0);
   const boards = [], sticks = [];
-  for (let d = 20; d < LOOP; d += 13) {
+  for (let d = 20; d < TOTAL; d += 13) {
     if ((d > TUNNEL.start - 40 && d < TUNNEL.end + 40) || Math.abs(d - BRIDGE.x) < 40) continue;
     const k = curvatureAt(d);
     if (Math.abs(k) < 0.0042) continue;
