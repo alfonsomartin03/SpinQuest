@@ -151,7 +151,7 @@ export class Game {
     // Pedalling means real power or cadence (a spinning flywheel's last few rpm don't count).
     if (pw > 3 || this.cad > 8) {
       this.lastMove = this.clock;
-      if (!this.started) { this.started = true; this.startedAt = Date.now(); this.#toast('Go!', 'Ride started', 'go'); this.#sfx('step'); }
+      if (!this.started) { this.started = true; this.startedAt = Date.now(); this.#toast('Go!', 'Keep pedalling', 'go'); this.#sfx('step'); }
     }
     this.idle = this.clock - this.lastMove; // seconds since the rider last pedalled
     this.paused = !this.started || this.idle > IDLE_PAUSE;
@@ -382,7 +382,7 @@ export class Game {
         if (inside && !was) {
           r.segStart[s.id] = this.clock;
           if (r.isUser) {
-            this.#toast(s.name.toUpperCase(), s.kind === 'climb' ? 'Climb segment started' : 'Sprint segment started', 'seg');
+            this.#toast(s.name, s.kind === 'climb' ? 'Timed climb: beat the pack!' : 'Timed sprint: beat the pack!', 'seg');
             this.#sfx('segment');
           }
         } else if (!inside && was) {
@@ -409,8 +409,8 @@ export class Game {
     const pts = [0, 300, 200, 100][rank] ?? 50;
     this.#award(pts);
     if (rank === 1 && all.length > 1) { this.segWins++; this.#sfx('win'); } else this.#sfx('segment');
-    const medal = rank === 1 ? 'Segment win!' : `Finished ${rank}${['st', 'nd', 'rd'][rank - 1] || 'th'} of ${all.length}`;
-    this.#toast(seg.name, `${medal}  ·  ${time.toFixed(1)}s${isPR ? '  ·  NEW PR' : ''}  ·  +${pts * this.mult}`, rank === 1 ? 'win' : 'seg');
+    const medal = rank === 1 ? 'You won!' : `You came ${rank}${['st', 'nd', 'rd'][rank - 1] || 'th'} of ${all.length}`;
+    this.#toast(seg.name, `${medal} ${time.toFixed(1)} s${isPR ? ' · Your best yet!' : ''} · +${pts * this.mult} points`, rank === 1 ? 'win' : 'seg');
   }
 
   /** Zone changes and landmark discoveries. */
@@ -433,7 +433,7 @@ export class Game {
           this.progress.discovered[lm.id] = Date.now();
           this.discoveredNow.push(lm.id);
           this.score += 100;
-          this.#toast(`${lm.emoji} ${lm.name}`, `Landmark discovered  ·  ${Object.keys(this.progress.discovered).length}/${LANDMARKS.length}  ·  +100`, 'ach');
+          this.#toast(`${lm.emoji} ${lm.name}`, `New landmark! ${Object.keys(this.progress.discovered).length} of ${LANDMARKS.length} found · +100 points`, 'ach');
           this.#sfx('ach');
         }
       } else if (d > 120) this.nearLm.delete(lm.id);
@@ -469,14 +469,14 @@ export class Game {
         this.unlocked.push(a.id);
         this.progress.ach[a.id] = Date.now();
         this.score += 250;
-        this.#toast(a.name, `Achievement unlocked  ·  ${a.desc}`, 'ach');
+        this.#toast(a.name, `Achievement! ${a.desc}`, 'ach');
         this.#sfx('ach');
       }
     }
     const lvl = levelFor(this.totalXp);
     if (lvl > this.level) {
       this.level = lvl;
-      this.#toast(`LEVEL ${lvl}`, 'Level up!', 'level');
+      this.#toast('Level up!', `You are now level ${lvl}`, 'level');
       this.#sfx('level');
     }
   }
@@ -490,7 +490,7 @@ export class Game {
       if (!this.finished) {
         this.#closeStep();
         this.finished = true;
-        this.#toast('WORKOUT COMPLETE', 'Nice work!', 'win');
+        this.#toast('Workout complete!', 'Nice work', 'win');
         this.#sfx('win');
       }
       return;
@@ -502,8 +502,8 @@ export class Game {
       this.stepStats = { t: 0, on: 0, dur: w.step.dur };
       this.grace = 6;
       if (w.idx > 0) {
-        const len = w.step.dur < 90 ? `${w.step.dur}s` : `${Math.round(w.step.dur / 60)} min`;
-        this.#toast(w.step.label || 'Next interval', `${len} @ ${w.watts} W`, 'step');
+        const len = w.step.dur < 90 ? `${w.step.dur} seconds` : `${Math.round(w.step.dur / 60)} minutes`;
+        this.#toast(w.step.label || 'Next interval', `${len} at ${w.watts} watts`, 'step');
         this.#sfx('step');
       }
     }
@@ -514,7 +514,7 @@ export class Game {
     if (s && s.dur >= 30 && s.t > 0 && s.on / s.t >= 0.9 && this.target) {
       this.perfectIntervals++;
       this.#award(100);
-      this.#toast('PERFECT INTERVAL', `${Math.round((s.on / s.t) * 100)}% on target  ·  +${100 * this.mult}`, 'win');
+      this.#toast('Perfect interval!', `${Math.round((s.on / s.t) * 100)}% on target · +${100 * this.mult} points`, 'win');
       this.#sfx('win');
     }
   }
@@ -534,7 +534,7 @@ export class Game {
       if (this.offTime > 5) { this.streak = 0; this.offTime = 0; }
     }
     this.mult = Math.min(5, 1 + Math.floor(this.streak / 30));
-    if (this.mult > prevMult) { this.#toast(`COMBO x${this.mult}`, 'Keep it steady!', 'combo'); this.#sfx('combo'); }
+    if (this.mult > prevMult) { this.#toast(`Combo x${this.mult}`, this.target ? 'Stay on target to keep it growing' : 'Keep pedalling to keep it growing', 'combo'); this.#sfx('combo'); }
 
     const rate = t ? (on ? 1 : 0) : 0.15 + 0.15 * this.pz;
     this.score += rate * this.mult * dt;

@@ -13,7 +13,7 @@
   <div class="loader-card">
     <h1>Spin<span>Quest</span></h1>
     <div class="loader-bar"><i id="loader-bar"></i></div>
-    <p id="loader-text">Starting…</p>
+    <p id="loader-text">Getting ready…</p>
     <p class="small" id="loader-error" hidden></p>
   </div>
 </div>
@@ -23,114 +23,126 @@
   <div class="card menu-card">
     <header>
       <h1>Spin<span>Quest</span></h1>
-      <p>Turn your indoor ride into a game. Connect your trainer and heart-rate strap, pick a workout, and set your own power. SpinQuest reacts to every watt and beat.</p>
+      <p>Ride your indoor trainer through a game world. Pedal to move, collect gems and chase the pack.</p>
     </header>
 
     <div id="bt-warning" class="warning" hidden>
-      Web Bluetooth isn't available in this browser. Open this page in <b>Chrome</b> or <b>Edge</b> (desktop or Android), or use the simulator below.
+      Bluetooth doesn't work in this browser. Use <b>Chrome</b> or <b>Edge</b> to connect your gear, or just press Start and ride with the keyboard.
     </div>
 
-    <div class="grid2">
-      <section class="device" id="dev-trainer">
-        <div class="dev-head"><span class="dot"></span><h3>Trainer / power meter</h3></div>
-        <p class="status" data-status>Not connected</p>
-        <button class="btn" data-connect>Connect</button>
-        <button class="btn ghost" data-reconnect hidden></button>
-        <button class="btn ghost" data-all hidden>Search all devices</button>
-      </section>
-      <section class="device" id="dev-hr">
-        <div class="dev-head"><span class="dot"></span><h3>Heart-rate strap</h3></div>
-        <p class="status" data-status>Not connected</p>
-        <button class="btn" data-connect>Connect</button>
-        <button class="btn ghost" data-reconnect hidden></button>
-        <button class="btn ghost" data-all hidden>Search all devices</button>
-      </section>
-      <section class="device" id="dev-click">
-        <div class="dev-head"><span class="dot"></span><h3>Zwift Click (shifter)</h3></div>
-        <p class="status" data-status>Not connected</p>
-        <button class="btn" data-connect>Connect</button>
-        <button class="btn ghost" data-reconnect hidden></button>
-        <button class="btn ghost" data-all hidden>Search all devices</button>
-        <label class="small check"><input type="checkbox" id="click-swap"> Swap buttons (right = easier)</label>
-      </section>
-    </div>
-    <p class="small tip">The pairing list only shows trainers, power meters and heart-rate straps. Pick the one named like your device (for example "KICKR CORE 1234"). Pedal or wet the strap first so it wakes up.</p>
-    <label class="small check"><input type="checkbox" id="show-all"> Show every Bluetooth device (only if yours isn't listed)</label>
+    <section class="step">
+      <h2 class="step-title"><i>1</i> Connect your gear <small>optional</small></h2>
+      <div class="grid2">
+        <section class="device" id="dev-trainer">
+          <div class="dev-head"><span class="dot"></span><h3>Trainer or power meter</h3></div>
+          <p class="status" data-status>Not connected</p>
+          <button class="btn" data-connect>Connect</button>
+          <button class="btn ghost" data-reconnect hidden></button>
+          <button class="btn ghost" data-all hidden>Search all devices</button>
+        </section>
+        <section class="device" id="dev-hr">
+          <div class="dev-head"><span class="dot"></span><h3>Heart-rate strap</h3></div>
+          <p class="status" data-status>Not connected</p>
+          <button class="btn" data-connect>Connect</button>
+          <button class="btn ghost" data-reconnect hidden></button>
+          <button class="btn ghost" data-all hidden>Search all devices</button>
+        </section>
+        <section class="device" id="dev-click">
+          <div class="dev-head"><span class="dot"></span><h3>Zwift Click</h3></div>
+          <p class="status" data-status>Not connected</p>
+          <button class="btn" data-connect>Connect</button>
+          <button class="btn ghost" data-reconnect hidden></button>
+          <button class="btn ghost" data-all hidden>Search all devices</button>
+          <label class="small check"><input type="checkbox" id="click-swap"> Swap the + and − buttons</label>
+        </section>
+      </div>
+      <p class="small tip">Wake your device first: spin the pedals, or wet the heart-rate strap. Then press Connect and pick it from the list.</p>
 
-    <section class="device ctl" id="ctl" hidden>
-      <div class="dev-head"><h3>Trainer resistance</h3></div>
-      <p class="small" id="ctl-note"></p>
-      <label class="small check"><input type="checkbox" id="resist-on" checked> Let SpinQuest control my trainer's resistance (untick if you set it yourself, for example with a real cassette)</label>
+      <section class="device ctl" id="ctl" hidden>
+        <div class="dev-head"><h3>Trainer resistance</h3></div>
+        <p class="small" id="ctl-note"></p>
+        <label class="small check"><input type="checkbox" id="resist-on" checked> Let SpinQuest set my trainer's resistance <span class="faint">(untick if you change gears on the bike yourself)</span></label>
+      </section>
     </section>
 
-    <section class="profile">
-      <h3>Rider</h3>
-      <div class="fields">
+    <section class="step profile">
+      <h2 class="step-title"><i>2</i> About you</h2>
+      <div class="fields three">
         <label>Name <input id="p-name" type="text" maxlength="14" placeholder="You"></label>
         <label>Weight (kg) <input id="p-weight" type="number" min="30" max="200" value="75"></label>
-        <label>FTP (W) <input id="p-ftp" type="number" min="50" max="600" value="200"></label>
-        <label>Max HR (bpm) <input id="p-maxhr" type="number" min="120" max="230" value="190"></label>
+        <label>FTP (watts) <input id="p-ftp" type="number" min="50" max="600" value="200"></label>
       </div>
-      <details class="hrzones" id="hrzones">
-        <summary>Heart-rate zones <small id="hrz-note"></small></summary>
-        <div class="fields" id="hrz-fields">
-          <label>Easy up to <input id="hrz-1" type="number" min="40" max="230"></label>
-          <label>Aerobic up to <input id="hrz-2" type="number" min="40" max="230"></label>
-          <label>Tempo up to <input id="hrz-3" type="number" min="40" max="230"></label>
-          <label>Threshold up to <input id="hrz-4" type="number" min="40" max="230"></label>
-        </div>
-        <p class="small">Upper limit of each zone in bpm; anything above Threshold is Max. Start from your own lab, field-test or watch zones. Until you change a number the zones follow Max HR (60, 70, 80 and 90%).
-          <button class="btn" type="button" id="hrz-reset">Reset to % of max HR</button></p>
-      </details>
+      <p class="small help">FTP is the most power you can hold for about an hour. Not sure? Leave it at 200 and change it later.</p>
     </section>
 
-    <section class="ridemode">
-      <h3>Ride</h3>
+    <section class="step ridemode">
+      <h2 class="step-title"><i>3</i> Pick a ride</h2>
       <div class="modes">
-        <label class="mode"><input type="radio" name="ridemode" value="free" checked><span><b>Free ride</b>Ride the course at your own pace. Chase the pack, the orbs and segments.</span></label>
-        <label class="mode"><input type="radio" name="ridemode" value="erg"><span><b>ERG mode</b>The trainer holds a steady power for you, whatever your cadence.</span></label>
-        <label class="mode"><input type="radio" name="ridemode" value="workout"><span><b>Workout mode</b>Follow a structured workout. The trainer holds each interval for you.</span></label>
+        <label class="mode"><input type="radio" name="ridemode" value="free" checked><span><b>Free ride</b>Ride at your own pace. Chase riders and collect gems.</span></label>
+        <label class="mode"><input type="radio" name="ridemode" value="erg"><span><b>ERG mode</b>The trainer holds one power for you.</span></label>
+        <label class="mode"><input type="radio" name="ridemode" value="workout"><span><b>Workout</b>Follow a plan. The trainer sets each interval.</span></label>
       </div>
 
       <div class="modebox" data-for="free">
-        <label class="radio"><input type="radio" name="shiftmode" value="auto" checked><span><b>Auto-shift</b> SpinQuest changes gear to keep your cadence in your range. It changes gears and nothing else, so your power is up to you and the terrain decides how hard it is: on a steep climb you can still end up grinding if you don't push enough watts.</span></label>
-        <label class="radio"><input type="radio" name="shiftmode" value="manual"><span><b>I'll shift</b> With a Zwift Click, the + − buttons or ← →. Nothing shifts for you, even when your cadence leaves your range: choosing the right gear is up to you.</span></label>
+        <label class="radio"><input type="radio" name="shiftmode" value="auto" checked><span><b>Auto-shift</b> Gears change for you to keep your pedalling comfortable.</span></label>
+        <label class="radio"><input type="radio" name="shiftmode" value="manual"><span><b>I'll shift</b> Change gear with the Zwift Click, the + − buttons or ← →.</span></label>
       </div>
       <div class="modebox" data-for="erg">
-        <label class="small">Hold <input id="erg-watts" type="number" min="30" max="1000" step="5" value="150" aria-label="ERG power in watts"> W
-          <span class="small">During the ride, + − (or the Click, or ← →) change it by 10 W.</span></label>
+        <label class="small">Hold <input id="erg-watts" type="number" min="30" max="1000" step="5" value="150" aria-label="ERG power in watts"> watts
+          <span class="small">Change it during the ride with + and −.</span></label>
       </div>
       <div class="modebox" data-for="workout">
-        <select id="workout"></select>
+        <select id="workout" aria-label="Workout"></select>
         <p class="small" id="workout-desc"></p>
         <canvas id="workout-preview" width="600" height="70"></canvas>
       </div>
-
-      <div class="cadrange small" id="cadrange">Comfortable cadence
-        <input id="cad-low" type="number" min="50" max="110" value="80" aria-label="Lowest comfortable cadence"> to
-        <input id="cad-high" type="number" min="60" max="130" value="100" aria-label="Highest comfortable cadence"> rpm
-        <span id="cad-note"></span>
-      </div>
-    </section>
-
-    <section class="gfx">
-      <label class="small">Graphics
-        <select id="quality">
-          <option value="low">Low (fastest)</option>
-          <option value="medium">Medium</option>
-          <option value="high" selected>High</option>
-          <option value="ultra">Ultra (best looking)</option>
-        </select>
-      </label>
-      <span class="small">The picture adapts its sharpness automatically to keep the frame rate smooth.</span>
     </section>
 
     <div class="actions">
       <button class="btn primary big" id="start">Start ride</button>
       <p class="small" id="start-hint"></p>
       <button class="btn" id="m-fit" hidden>⬇ Download last ride (.fit)</button>
-      <p class="small" id="m-fit-note" hidden>Kept in memory only. It is gone when you close this tab or start another ride.</p>
+      <p class="small" id="m-fit-note" hidden>Only kept until you close this tab or start another ride.</p>
     </div>
+
+    <details class="more">
+      <summary>More options</summary>
+      <div class="more-body">
+        <div class="opt">
+          <label class="small">Max heart rate (bpm) <input id="p-maxhr" type="number" min="120" max="230" value="190"></label>
+          <p class="small help">Sets your heart-rate zones. A rough guess is 220 minus your age.</p>
+          <details class="hrzones" id="hrzones">
+            <summary>Custom heart-rate zones <small id="hrz-note"></small></summary>
+            <div class="fields" id="hrz-fields">
+              <label>Easy up to <input id="hrz-1" type="number" min="40" max="230"></label>
+              <label>Aerobic up to <input id="hrz-2" type="number" min="40" max="230"></label>
+              <label>Tempo up to <input id="hrz-3" type="number" min="40" max="230"></label>
+              <label>Threshold up to <input id="hrz-4" type="number" min="40" max="230"></label>
+            </div>
+            <p class="small help">Type the top of each zone in bpm. Anything higher counts as Max. Leave blank to use standard zones.
+              <button class="btn" type="button" id="hrz-reset">Use standard zones</button></p>
+          </details>
+        </div>
+        <div class="opt cadrange small" id="cadrange">
+          <span>Comfortable pedalling speed</span>
+          <input id="cad-low" type="number" min="50" max="110" value="80" aria-label="Lowest comfortable cadence"> to
+          <input id="cad-high" type="number" min="60" max="130" value="100" aria-label="Highest comfortable cadence"> rpm
+          <span class="help" id="cad-note"></span>
+        </div>
+        <div class="opt gfx">
+          <label class="small">Graphics
+            <select id="quality">
+              <option value="low">Low (fastest)</option>
+              <option value="medium">Medium</option>
+              <option value="high" selected>High</option>
+              <option value="ultra">Ultra (best looking)</option>
+            </select>
+          </label>
+          <span class="small help">The game also adjusts itself to stay smooth.</span>
+        </div>
+        <label class="small check"><input type="checkbox" id="show-all"> Can't see your device? Show all Bluetooth devices.</label>
+      </div>
+    </details>
 
     <footer class="level-row">
       <div><b id="m-level">Level 1</b> <span id="m-title"></span></div>
@@ -146,14 +158,14 @@
   <section class="panel stats">
     <div class="power-row">
       <div class="power-big"><span id="h-power">0</span><small>W</small></div>
-      <div class="zone-chip" id="h-pzone">Recovery</div>
+      <div class="zone-chip" id="h-pzone" title="Your power zone: how hard you are working compared with your FTP.">Recovery</div>
     </div>
     <div class="zonebar" id="h-zonebar"></div>
     <div class="metrics">
-      <div><b id="h-cad">--</b><small>rpm</small></div>
-      <div class="hr"><b id="h-hr">--</b><small>bpm</small><em id="h-hrz"></em></div>
+      <div title="Pedalling speed, in revolutions per minute"><b id="h-cad">--</b><small>rpm</small></div>
+      <div class="hr" title="Heart rate, and your heart-rate zone"><b id="h-hr">--</b><small>bpm</small><em id="h-hrz"></em></div>
       <div><b id="h-speed">0.0</b><small>km/h</small></div>
-      <div><b id="h-wkg">0.0</b><small>W/kg</small></div>
+      <div title="Watts per kilogram of body weight"><b id="h-wkg">0.0</b><small>W/kg</small></div>
     </div>
     <div class="minor">
       <span id="h-time">0:00</span><span id="h-dist">0.00 km</span><span id="h-grade">0.0%</span><span id="h-kj">0 kJ</span>
@@ -163,21 +175,21 @@
       <div class="gtxt"><b id="g-num">17</b><small id="g-label">gear</small><span id="g-info"></span></div>
       <button class="gbtn" id="g-up" title="Harder gear (→)">+</button>
     </div>
-    <div class="tags"><span id="h-draft" class="tag" hidden>Drafting</span><span id="h-pause" class="tag warn" hidden>Paused</span></div>
+    <div class="tags"><span id="h-draft" class="tag" hidden title="You are in another rider's slipstream, so it is easier to go fast.">Drafting</span><span id="h-pause" class="tag warn" hidden>Paused</span></div>
   </section>
   <section class="panel climb" id="h-climb" hidden>
     <div class="climb-head"><span class="climb-tag">CLIMB</span><b id="c-name"></b></div>
     <div class="climb-sub" id="c-sub"></div>
     <canvas id="c-profile" width="600" height="120"></canvas>
     <div class="climb-grid">
-      <div><small>Dist. left</small><b id="c-left">--</b></div>
+      <div><small>Distance left</small><b id="c-left">--</b></div>
       <div><small>Climb left</small><b id="c-elev">--</b></div>
-      <div><small>Avg left</small><b id="c-avg">--</b></div>
-      <div><small>Now</small><b id="c-now">--</b></div>
-      <div><small>Next 500m</small><b id="c-next">--</b></div>
-      <div><small>VAM m/h</small><b id="c-vam">--</b></div>
-      <div><small>ETA top</small><b id="c-eta">--</b></div>
-      <div><small>Summit</small><b id="c-top">--</b></div>
+      <div><small>Grade now</small><b id="c-now">--</b></div>
+      <div><small>Time to top</small><b id="c-eta">--</b></div>
+      <div class="quiet"><small>Average grade</small><b id="c-avg">--</b></div>
+      <div class="quiet"><small>Next 500 m</small><b id="c-next">--</b></div>
+      <div class="quiet"><small>Climb rate</small><b id="c-vam">--</b></div>
+      <div class="quiet"><small>Height at top</small><b id="c-top">--</b></div>
     </div>
     <div class="climb-foot" id="c-steep"></div>
   </section>
@@ -200,16 +212,16 @@
     <canvas id="h-mini" width="720" height="84"></canvas>
     <div class="turn-banner" id="h-turn" hidden>
       <div class="turn-text"><b id="h-turn-title"></b><span id="h-turn-sub"></span></div>
-      <div class="turn-act"><button class="btn" id="h-turn-btn">Go around</button><small id="h-turn-hint">or double-click your Zwift Click · <kbd>E</kbd></small></div>
+      <div class="turn-act"><button class="btn" id="h-turn-btn">Go around</button><small id="h-turn-hint">or press <kbd>E</kbd> · or double-click your Click</small></div>
       <div class="bar"><i id="h-turn-bar"></i></div>
     </div>
     <div class="seg-banner" id="h-seg" hidden><b id="h-seg-name"></b><div class="bar"><i id="h-seg-bar"></i></div><span id="h-seg-time"></span></div>
   </div>
 
   <div class="dock">
-  <div id="h-sim" class="simhelp" hidden>Simulator: <kbd>↑</kbd><kbd>↓</kbd> ±10 W · <kbd>PgUp</kbd><kbd>PgDn</kbd> ±50 W · hold <kbd>Space</kbd> sprint · <kbd>P</kbd> stop pedalling</div>
+  <div id="h-sim" class="simhelp" hidden title="PgUp and PgDn change power in bigger steps. M mutes the sound.">Keyboard ride: <kbd>↑</kbd> <kbd>↓</kbd> change power · hold <kbd>Space</kbd> to sprint · <kbd>P</kbd> to stop pedalling</div>
   <div class="bottom">
-    <section class="panel combo">
+    <section class="panel combo" title="Ride steadily to build your multiplier. It grows every 30 seconds, up to x5.">
       <div class="score"><span id="h-score">0</span><small>pts</small></div>
       <div class="mult"><b id="h-mult">x1</b><div class="bar"><i id="h-multbar"></i></div></div>
       <div class="lvl"><b id="h-level">Lv 1</b><div class="bar thin"><i id="h-xpbar"></i></div></div>
@@ -238,6 +250,7 @@
     <h2 id="s-title">Ride complete</h2>
     <div class="stat-grid" id="s-stats"></div>
     <canvas id="s-chart" width="900" height="200"></canvas>
+    <p class="small chart-key"><span class="k power"></span> Power <span class="k hr"></span> Heart rate</p>
     <div class="zones2">
       <div><h4>Time in power zones</h4><div id="s-zp"></div></div>
       <div><h4>Time in heart-rate zones</h4><div id="s-zh"></div></div>
@@ -251,10 +264,8 @@
     </div>
     <div class="fit-row" id="s-fit" hidden>
       <div>
-        <b>Upload this ride</b>
-        <small>Download a .fit file for Strava, Garmin Connect, TrainingPeaks and others. It is marked as a virtual ride, and the route is your course laid over
-          <b>the Bermuda Triangle</b>
-          at true scale, so distance, climbing and turns match. Kept in memory only: it is deleted when you close this tab or start another ride.</small>
+        <b>Save this ride</b>
+        <small>Download a .fit file to upload to Strava, Garmin Connect or TrainingPeaks. It is a virtual ride set in open ocean, so it won't touch real segments. The file is only kept until you close this tab or start another ride.</small>
       </div>
       <button class="btn primary" id="s-fit-dl">⬇ Download .fit</button>
     </div>
@@ -262,10 +273,10 @@
   </div>
 </main>
 
-<div id="toasts"></div>
+<div id="toasts" role="status" aria-live="polite"></div>
 
 <div id="load-error" class="warning" hidden style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:20;max-width:560px">
-  The app didn't load. Start it with <b>python3 serve.py</b> and open <b>http://localhost:8000</b> in Chrome. Opening index.html directly won't work.
+  Can't start. Run <b>python3 serve.py</b>, then open <b>http://localhost:8000</b> in Chrome.
 </div>
 <script>setTimeout(() => { if (!window.__sqLoaded) document.getElementById('load-error').hidden = false; }, 2000);</script>
 <script type="importmap">{"imports":{"three":"./vendor/three/three.module.min.js","three/addons/":"./vendor/three/addons/"}}</script>

@@ -210,19 +210,19 @@ export const bluetoothSupported = () => typeof navigator !== 'undefined' && !!na
 /** Why Bluetooth can't be used here, in plain words (or null if it can). */
 export function bluetoothProblem() {
   if (bluetoothSupported()) return null;
-  if (location.protocol === 'file:') return 'Open the app with "python3 serve.py" (http://localhost:8000), not by double-clicking index.html.';
+  if (location.protocol === 'file:') return 'Run "python3 serve.py" and open http://localhost:8000. Double-clicking index.html won\'t work.';
   if (!window.isSecureContext) return `Bluetooth needs http://localhost:8000 (or https). This page is on ${location.origin}.`;
-  return 'This browser has no Web Bluetooth. Use Google Chrome or Microsoft Edge (Safari, Firefox and the Claude app browser do not support it).';
+  return 'This browser can\'t use Bluetooth. Switch to Google Chrome or Microsoft Edge.';
 }
 
 /** Turn a Web Bluetooth error into advice the rider can act on. */
 export function explainError(err) {
   const msg = err?.message || String(err);
-  if (err?.name === 'NotFoundError') return 'No device chosen. Wake the device (spin the cranks), then try again. Not in the list? Use "Search all devices".';
-  if (err?.name === 'SecurityError') return 'Bluetooth blocked. Allow Bluetooth for your browser in system settings and try again.';
-  if (err?.name === 'NetworkError') return 'Found it but could not connect. Pedal to wake it, make sure no other app has taken its connection, then retry.';
-  if (/No supported power service/.test(msg)) return 'That device has no power or trainer service. Pick your trainer/power meter, not another device.';
-  return `Couldn't connect: ${msg}`;
+  if (err?.name === 'NotFoundError') return 'No device picked. Wake it up (spin the pedals) and try again. Not listed? Try "Search all devices".';
+  if (err?.name === 'SecurityError') return 'Bluetooth is blocked. Allow it for your browser in your system settings, then try again.';
+  if (err?.name === 'NetworkError') return 'Found it, but could not connect. Wake it up, close any other app using it, then try again.';
+  if (/No supported power service/.test(msg)) return 'That is not a trainer or power meter. Pick your trainer or power meter from the list.';
+  return `Could not connect. ${msg}`;
 }
 
 // Chrome's picker lists every device matching ANY filter. Matching on the standard service keeps

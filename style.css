@@ -45,8 +45,7 @@ header p { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
 .btn.primary:hover { filter: brightness(1.1); }
 .btn.big { font-size: 18px; font-weight: 700; padding: 14px 28px; width: 100%; }
 
-.profile, .workout-pick, .ridemode { margin-top: 22px; }
-.hrzones summary { margin-top: 10px; cursor: pointer; font-size: 13px; color: var(--text); }
+.hrzones summary { cursor: pointer; font-size: 13px; color: var(--text); }
 .hrzones summary small { margin-left: 6px; }
 .fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
 .fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
@@ -224,6 +223,7 @@ kbd { background: rgba(255, 255, 255, 0.14); border-radius: 5px; padding: 1px 6p
 .left-col { position: absolute; top: 14px; left: 14px; width: 300px; display: flex; flex-direction: column; gap: 10px; }
 .left-col .stats { position: static; width: auto; }
 .right-col { width: 300px; }
+.device h3 { text-transform: none; letter-spacing: 0; font-size: 15px; color: var(--text); }
 .panel-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 .panel-head small { font-size: 10px; letter-spacing: 0.04em; text-transform: none; }
 
@@ -343,10 +343,6 @@ kbd { background: rgba(255, 255, 255, 0.14); border-radius: 5px; padding: 1px 6p
 
 /* ---------- narrow windows ---------- */
 @media (max-width: 1100px) { .top-center { width: clamp(244px, calc(100vw - 656px), 340px); min-width: 0; } }
-@media (max-width: 1000px) {
-  .turn-banner { grid-template-columns: 1fr; }
-  .turn-act { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
-}
 @media (max-width: 760px) {
   .top-center { left: 328px; transform: none; width: calc(100vw - 342px); }
   .combo { width: 200px; }
@@ -355,3 +351,47 @@ kbd { background: rgba(255, 255, 255, 0.14); border-radius: 5px; padding: 1px 6p
   .bottom { flex-direction: column; }
   .combo { width: auto; }
 }
+
+/* ---------- menu: three simple steps, with the rarely needed options folded away ---------- */
+.step { margin-top: 24px; }
+.step:first-of-type { margin-top: 18px; }
+.step-title { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 17px; letter-spacing: 0; }
+.step-title i { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-style: normal; font-size: 13px; font-weight: 800; }
+.step-title small { margin-left: 2px; padding: 2px 9px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+.fields.three { grid-template-columns: repeat(3, 1fr); }
+.fields label { font-size: 13px; }
+.help { margin: 8px 2px 0; line-height: 1.45; }
+.faint { color: var(--muted); opacity: 0.85; }
+.more { margin-top: 22px; border: 1px solid var(--line); border-radius: 14px; padding: 4px 14px; }
+.more > summary { cursor: pointer; padding: 10px 0; font-weight: 600; color: var(--muted); }
+.more[open] > summary { color: var(--text); }
+.more-body { display: flex; flex-direction: column; gap: 16px; padding: 4px 0 14px; }
+.opt .fields { grid-template-columns: repeat(4, 1fr); }
+.opt .gfx, .opt.gfx { margin-top: 0; }
+.opt input[type=number] { width: 84px; }
+.opt .fields input[type=number] { width: 100%; }
+.hrzones { margin-top: 10px; }
+.hrzones .btn { margin-left: 6px; padding: 4px 10px; font-size: 12px; }
+.actions { margin-top: 26px; }
+.modebox .radio span b { display: inline; }
+.climb-grid .quiet { opacity: 0.7; }
+@media (max-width: 760px) { .fields.three, .opt .fields { grid-template-columns: 1fr 1fr; } }
+
+/* ---------- popups that must stay readable at any width ---------- */
+.turn-text b { white-space: nowrap; }
+.turn-text span { line-height: 1.35; }
+@media (max-width: 1250px) {
+  .turn-banner { grid-template-columns: 1fr; }
+  .turn-act { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+  .turn-act small { text-align: right; max-width: 55%; }
+}
+.climb-grid small { white-space: normal; text-transform: none; letter-spacing: 0; font-size: 10.5px; line-height: 1.15; min-height: 2.3em; display: block; }
+
+.chart-key { display: flex; gap: 8px; align-items: center; margin: 6px 2px 0; }
+.chart-key .k { display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-left: 10px; }
+.chart-key .k:first-child { margin-left: 0; }
+.chart-key .k.power { background: #fff; }
+.chart-key .k.hr { background: #ef5350; }
+
+/* the next step is always in view: Start stays pinned to the bottom of the menu while you scroll */
+.menu-card .actions { position: sticky; bottom: -1px; z-index: 3; margin: 22px -28px 0; padding: 16px 28px 12px; background: linear-gradient(to top, #0e1322 72%, rgba(14, 19, 34, 0)); }

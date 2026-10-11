@@ -102,7 +102,7 @@ function showHrLimits() {
   const maxHr = parseFloat($('p-maxhr').value) || profile.maxHr;
   $('hrzones').dataset.custom = custom ? '1' : '0';
   (custom ?? defaultHrLimits(maxHr)).forEach((v, i) => { $(`hrz-${i + 1}`).value = v; });
-  $('hrz-note').textContent = custom ? '(custom)' : '(from Max HR)';
+  $('hrz-note').textContent = custom ? '(custom)' : '(standard zones in use)';
   $('hrz-reset').hidden = !custom;
 }
 
@@ -162,27 +162,27 @@ function refreshMenu() {
   $('m-title').textContent = levelTitle(lvl);
   $('m-xpbar').style.width = `${((progress.xp - xpForLevel(lvl)) / (xpForLevel(lvl + 1) - xpForLevel(lvl))) * 100}%`;
   $('m-xp').textContent = `${progress.xp.toLocaleString()} XP · ${Object.keys(progress.ach).length}/${ACHIEVEMENTS.length} achievements · ${Object.keys(progress.discovered).length}/${LANDMARKS.length} landmarks`;
-  let hint = 'No trainer connected: you will ride with the keyboard simulator.';
+  let hint = 'No trainer? No problem: you will ride with the keyboard.';
   if (links.trainer) {
     if (canControl() && p.control !== 'off') {
       hint = {
         free: p.shift === 'auto'
-          ? 'Free ride, auto-shift: SpinQuest picks the gear to keep your cadence in range. Power is yours, so steep climbs can make you grind.'
-          : 'Free ride, you shift: use the Zwift Click, the + − buttons or ← →. Nothing shifts for you.',
-        erg: `ERG mode: the trainer holds ${p.ergWatts} W. + − (or the Click) change it by 10 W.`,
-        workout: 'Workout mode: the trainer holds each interval for you.',
+          ? 'Gears change for you. You choose how hard to pedal.'
+          : 'You change gear: Zwift Click, + − buttons or ← →.',
+        erg: `The trainer holds ${p.ergWatts} watts. Change it with + and −.`,
+        workout: 'The trainer sets each interval for you.',
       }[p.mode];
-    } else hint = 'Set your trainer power yourself. SpinQuest only listens.';
+    } else hint = 'You set the power on your trainer. SpinQuest just reads it.';
   }
   $('start-hint').textContent = hint;
-  $('start').textContent = links.trainer ? 'Start ride' : 'Start with simulator';
+  $('start').textContent = links.trainer ? 'Start ride' : 'Start with keyboard';
   // the cadence range steers auto-shift, and guards ERG and workout targets against grinding
   const autoOn = p.mode === 'free' && p.shift === 'auto';
   $('cadrange').classList.toggle('off', p.mode === 'free' && !autoOn);
   $('cad-low').disabled = $('cad-high').disabled = p.mode === 'free' && !autoOn;
-  $('cad-note').textContent = autoOn ? 'Auto-shift goes easier when you drop below the first number and harder when you go above the second.'
-    : p.mode === 'free' ? 'Not used while you shift yourself.'
-      : 'If your cadence falls below the first number the trainer eases its target so you are never left grinding.';
+  $('cad-note').textContent = autoOn ? 'Auto-shift changes gear when you pedal slower or faster than this.'
+    : p.mode === 'free' ? 'Only used by auto-shift.'
+      : 'If you pedal slower than the first number, the trainer eases off so you never grind.';
 }
 // HR zones: typing in a zone box makes them custom; until then they follow Max HR
 [1, 2, 3, 4].forEach((i) => $(`hrz-${i}`).addEventListener('input', () => {
@@ -211,11 +211,11 @@ function updateControlUi() {
   sec.classList.toggle('denied', st === 'denied');
   sec.querySelectorAll('input').forEach((el) => { el.disabled = !usable; });
   $('ctl-note').textContent = {
-    none: `${c?.reason || 'This device cannot be controlled.'} SpinQuest will listen only.`,
-    idle: 'Your trainer supports resistance control.',
-    requesting: 'Taking control of your trainer…',
-    ready: 'You have control of your trainer. Resistance follows your ride mode.',
-    denied: `${c?.reason || 'Control was refused.'} Close other apps that control it, or untick the box below.`,
+    none: `${c?.reason || 'Resistance cannot be controlled on this device.'} SpinQuest will just read your power.`,
+    idle: 'Your trainer can be controlled by SpinQuest.',
+    requesting: 'Connecting to your trainer\'s resistance…',
+    ready: 'SpinQuest is setting your trainer\'s resistance.',
+    denied: `${c?.reason || 'Control was refused.'} Close any other app using the trainer, or untick the box below.`,
   }[st] || '';
   refreshMenu();
 }
@@ -231,12 +231,18 @@ function deviceUi(kind) {
     card.classList.toggle('connected', state === 'connected');
     card.classList.toggle('reconnecting', state === 'reconnecting');
     status.textContent = {
-      idle: 'Not connected', connected: `Connected: ${name}`, reconnecting: `Reconnecting to ${name}…`, lost: `Lost ${name}`, connecting: 'Choose a device…',
+      idle: 'Not connected', connected: `Connected: ${name}`, reconnecting: `Reconnecting to ${name}…`, lost: `Lost ${name}. Wake it and try again.`, connecting: 'Pick your device in the popup…',
     }[state] || state;
     btn.textContent = state === 'connected' ? 'Disconnect' : 'Connect';
     if (state === 'connected') card.querySelector('[data-all]').hidden = true;
     if (mode === 'ride' && ['reconnecting', 'lost', 'connected'].includes(state) && links[kind]) {
-      toast({ text: { trainer: 'Trainer', hr: 'HR strap', click: 'Zwift Click' }[kind], sub: status.textContent, kind: state === 'connected' ? 'go' : 'combo' });
+      const what = { trainer: 'Trainer', hr: 'Heart-rate strap', click: 'Zwift Click' }[kind];
+      const msg = {
+        connected: [`${what} connected`, name],
+        reconnecting: [`${what} lost`, 'Trying to reconnect…'],
+        lost: [`${what} disconnected`, 'Wake it up and move it closer.'],
+      }[state];
+      toast({ text: msg[0], sub: msg[1], kind: state === 'connected' ? 'go' : 'combo' });
     }
     refreshMenu();
   };
@@ -268,7 +274,7 @@ async function connectDevice(kind, opts = {}) {
       link.control.onState = (st) => {
         updateControlUi();
         if (mode === 'ride' && ctlActive && ['denied', 'ready'].includes(st)) {
-          toast({ text: 'Trainer control', sub: st === 'ready' ? 'Resistance is now controlled by SpinQuest' : link.control.reason, kind: st === 'ready' ? 'go' : 'combo' });
+          toast({ text: st === 'ready' ? 'Trainer control on' : 'Trainer control off', sub: st === 'ready' ? 'SpinQuest now sets your resistance.' : link.control.reason, kind: st === 'ready' ? 'go' : 'combo' });
         }
       };
       updateControlUi();
@@ -318,13 +324,13 @@ function showGear(flash = false) {
   if (ergOn) {
     $('g-label').textContent = 'W target';
     $('g-num').textContent = String(ergWatts());
-    $('g-info').textContent = ctlActive ? 'the trainer holds this' : 'simulator follows this';
+    $('g-info').textContent = ctlActive ? 'the trainer holds this' : 'the keyboard follows this';
     box.classList.remove('sweet');
   } else {
     $('g-label').textContent = 'gear';
     $('g-num').textContent = String(gears.gear);
     const rpm = Math.round(cadSmooth);
-    $('g-info').textContent = `${gears.ratio.toFixed(2)} · ${rpm || '--'} rpm${gears.auto ? ` · auto ${gears.low}–${gears.high}` : ' · you shift'}`;
+    $('g-info').textContent = `${rpm || '--'} rpm · ${gears.auto ? 'auto' : 'you shift'}`;
     box.classList.toggle('sweet', rpm >= gears.low && rpm <= gears.high);
   }
   if (flash) { box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash'); }
@@ -390,11 +396,11 @@ let lastWhy = -9999;
 function explainNoGears() {
   if (mode !== 'ride' || performance.now() - lastWhy < 6000) return;
   lastWhy = performance.now();
-  const why = useSim ? 'Gears need a connected, controllable trainer. You are on the simulator.'
-    : rideMode === 'workout' ? 'Workout mode has no gears: the trainer holds each interval.'
-      : profile.control === 'off' ? 'You told SpinQuest not to control the trainer, so there are no virtual gears.'
-        : 'The trainer is not under SpinQuest control, so there are no virtual gears.';
-  toast({ text: 'Click pressed', sub: why, kind: 'combo' });
+  const why = useSim ? 'Gears need a connected trainer. You are riding with the keyboard.'
+    : rideMode === 'workout' ? 'In a workout the trainer sets each interval for you.'
+      : profile.control === 'off' ? 'You turned off trainer control, so gears are off too.'
+        : 'SpinQuest is not controlling your trainer, so gears are off.';
+  toast({ text: 'No gears this ride', sub: why, kind: 'combo' });
 }
 
 function onClickButton(dir) {
@@ -462,7 +468,7 @@ function downloadFit() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
-  toast({ text: 'Downloaded', sub: `${fit.name}: placed at ${fit.place.name}`, kind: 'go' });
+  toast({ text: 'Ride saved', sub: fit.name, kind: 'go' });
 }
 $('s-fit-dl').addEventListener('click', downloadFit);
 $('m-fit').addEventListener('click', downloadFit);
@@ -629,10 +635,10 @@ $('quality').addEventListener('change', () => renderer.applyQuality($('quality')
     await renderer.build((p, label) => { bar.style.width = `${Math.round(p * 100)}%`; text.textContent = label; });
   } catch (err) {
     console.error(err);
-    text.textContent = "Couldn't start the 3D world";
+    text.textContent = "Couldn't start the game graphics";
     const e = $('loader-error');
     e.hidden = false;
-    e.textContent = `${err.message || err}. SpinQuest needs a browser with WebGL 2 (current Chrome, Edge, Safari or Firefox).`;
+    e.textContent = `Use an up-to-date Chrome, Edge, Safari or Firefox, and make sure hardware acceleration is on. (Details: ${err.message || err})`;
     return;
   }
   $('loader').classList.add('done');

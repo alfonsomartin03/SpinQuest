@@ -533,10 +533,10 @@ export function buildLandmarks(field) {
   // kilometre markers
   for (let k = 1; k < 10; k++) placeObj(kmSign(k), k * 1000, 8.4);
   // the fork at the foot of the climb, and the road around's own kilometre markers
-  const forkSigns = { valley: 'THE FORK  ·  UP THE COL OR AROUND', death: 'THE FORK  ·  FINISH OR DEATH ROAD' };
+  const forkSigns = { valley: 'FORK  ·  UP THE COL OR AROUND', death: 'FORK  ·  FINISH OR DEATH ROAD' };
   const goreSigns = {
     valley: ['VALLEY ROAD  ↱', `${(SPURS[0].len / 1000).toFixed(1)} km flat · skips the climb`],
-    death: ['DEATH ROAD  ↱', `${(SPURS[1].climb / 1000).toFixed(1)} km climb · 8.6%`],
+    death: ['DEATH ROAD  ↱', `${(SPURS[1].climb / 1000).toFixed(1)} km steep climb`],
   };
   for (const sp of SPURS) {
     placeObj(gantry(forkSigns[sp.id], sp.color, { bunting: false, height: 6.8, width: 7.4 }), sp.fork - 130, 0, { yawFrom: 'along' });

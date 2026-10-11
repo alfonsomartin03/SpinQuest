@@ -139,7 +139,7 @@ export class Hud {
     e['h-pause'].hidden = true;
     const waiting = !game.started || (game.paused && !game.finished);
     e['h-wait'].hidden = !waiting;
-    setText(e['h-wait'], game.started ? 'Paused · pedal to resume' : 'Start pedalling to begin');
+    setText(e['h-wait'], game.started ? 'Paused. Pedal to carry on.' : 'Start pedalling to begin');
     e['h-sim'].hidden = !simActive;
 
     // score & combo
@@ -165,7 +165,7 @@ export class Hud {
       this.vizAt = game.clock;
       drawStrip(this.el['h-mini'], game);
       drawMap(this.el['h-map'], game, { zoom: this.mapZoom, selectedId: this.selectedId });
-      setText(this.el['h-mapnote'], this.mapZoom ? 'following' : `${Object.keys(game.progress.discovered).length}/${LANDMARKS.length} found`);
+      setText(this.el['h-mapnote'], this.mapZoom ? 'following you' : `${Object.keys(game.progress.discovered).length} of ${LANDMARKS.length} landmarks found`);
     }
     this.#zone(game);
     if (game.clock - this.graphAt > 0.5) {
@@ -182,7 +182,7 @@ export class Hud {
     const tg = e['h-target'];
     if (!game.workout.steps.length) {
       setText(e['h-step'], 'Free ride');
-      setText(e['h-next'], 'Last 5 minutes of power');
+      setText(e['h-next'], 'Your power, last 5 minutes');
       setText(e['h-remain'], '');
       tg.hidden = true;
       return;
@@ -190,7 +190,7 @@ export class Hud {
     if (game.workout.erg) { // ERG mode: one steady target, adjustable while riding
       tg.hidden = !game.target;
       setText(e['h-step'], 'ERG mode');
-      setText(e['h-next'], 'Hold the target · + − change it by 10 W');
+      setText(e['h-next'], 'Match the target. + and − change it by 10 watts.');
       setText(e['h-remain'], '');
       if (game.target) {
         setText(e['h-twatts'], String(game.target.watts));
@@ -203,12 +203,12 @@ export class Hud {
     }
     if (!w) {
       setText(e['h-step'], game.workout.name);
-      setText(e['h-next'], 'Start pedalling');
+      setText(e['h-next'], 'Start pedalling to begin');
       return;
     }
     tg.hidden = !game.target;
     setText(e['h-step'], game.finished ? 'Workout complete' : (w.step.label || 'Interval'));
-    setText(e['h-next'], w.next ? `Next: ${w.next.label || 'Interval'} ${Math.round(w.next.from * game.profile.ftp)} W · ${fmtTime(w.next.dur)}` : 'Last interval');
+    setText(e['h-next'], w.next ? `Next: ${w.next.label || 'Interval'}, ${Math.round(w.next.from * game.profile.ftp)} watts for ${fmtTime(w.next.dur)}` : 'Last interval');
     setText(e['h-remain'], fmtTime(w.remaining));
     if (game.target) {
       setText(e['h-twatts'], String(game.target.watts));
@@ -324,15 +324,15 @@ export class Hud {
     box.style.setProperty('--turn', sp.color);
     if (x.state === 'on') {
       setText(e['h-turn-title'], sp.onTitle);
-      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go, ${sp.onSub}`);
+      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go. ${sp.onSub}`);
       e['h-turn-btn'].hidden = true;
       e['h-turn-hint'].hidden = true;
       e['h-turn-bar'].style.width = `${(x.done / x.length) * 100}%`;
       return;
     }
     const m = Math.max(0, Math.round(x.toTurn / 10) * 10);
-    setText(e['h-turn-title'], x.armed ? `${sp.armedTitle} · fork in ${m} m` : `Fork in ${m} m · ${sp.forkTitle}`);
-    setText(e['h-turn-sub'], x.armed ? sp.armedSub : sp.ask(sp));
+    setText(e['h-turn-title'], x.armed ? `${sp.armedTitle} · fork in ${m} m` : `Fork in ${m} m`);
+    setText(e['h-turn-sub'], x.armed ? sp.armedSub : `${sp.question} ${sp.ask(sp)}`);
     setText(e['h-turn-btn'], x.armed ? sp.cancel : sp.button);
     e['h-turn-btn'].hidden = false;
     e['h-turn-hint'].hidden = false;
@@ -366,8 +366,8 @@ export class Hud {
     const pct = (g) => `${(g * 100).toFixed(1)}%`;
     setText(e['c-name'], climb.name);
     setText(e['c-sub'], st.state === 'before'
-      ? `Starts in ${km(st.toStart)} · ${(st.len / 1000).toFixed(1)} km at ${pct(st.avgAll)} avg`
-      : `${Math.round(st.progress * 100)}% done · ${(st.len / 1000).toFixed(1)} km at ${pct(st.avgAll)} avg`);
+      ? `Starts in ${km(st.toStart)} · ${(st.len / 1000).toFixed(1)} km, ${pct(st.avgAll)} average`
+      : `${Math.round(st.progress * 100)}% done · ${(st.len / 1000).toFixed(1)} km, ${pct(st.avgAll)} average`);
     setText(e['c-left'], km(st.left));
     setText(e['c-elev'], `${Math.round(st.elevLeft)} m`);
     setText(e['c-avg'], pct(st.avgLeft));
@@ -375,10 +375,10 @@ export class Hud {
     e['c-now'].style.color = gradeColorFor(st.gradeNow);
     setText(e['c-next'], pct(st.next500));
     e['c-next'].style.color = gradeColorFor(st.next500);
-    setText(e['c-vam'], vam ? Math.round(vam).toLocaleString() : '--');
+    setText(e['c-vam'], vam ? `${Math.round(vam).toLocaleString()} m/h` : '--');
     setText(e['c-eta'], this.spd > 0.8 && st.state === 'on' ? fmtTime(st.left / this.spd) : '--');
     setText(e['c-top'], `${Math.round(st.summitAlt).toLocaleString()} m`);
-    setText(e['c-steep'], st.left > 30 ? `Steepest ahead ${pct(st.steepest.grade)} in ${km(st.steepest.dist)}` : 'Almost there');
+    setText(e['c-steep'], st.left > 30 ? `Steepest part: ${pct(st.steepest.grade)}, in ${km(st.steepest.dist)}` : 'Almost there!');
     drawClimbProfile(e['c-profile'], climb, st);
   }
 }
@@ -393,16 +393,19 @@ function fmtGap(sec) {
 
 // ---- Toasts -------------------------------------------------------------------
 
+/** Pop-up messages. Never more than two at once, and a repeat of one already showing is ignored, so the screen stays calm. */
 export function toast({ text, sub, kind }) {
   const host = $('toasts');
+  for (const t of host.children) if (t.dataset.key === `${text}|${sub}`) return;
   const el = document.createElement('div');
   el.className = `toast ${kind || ''}`;
+  el.dataset.key = `${text}|${sub}`;
   el.innerHTML = `<b></b><span></span>`;
   el.firstChild.textContent = text;
   el.lastChild.textContent = sub || '';
   host.appendChild(el);
-  while (host.children.length > 3) host.firstChild.remove();
-  setTimeout(() => el.remove(), 3500);
+  while (host.children.length > 2) host.firstChild.remove();
+  setTimeout(() => el.remove(), 3800);
 }
 
 // ---- Summary ------------------------------------------------------------------
@@ -410,15 +413,15 @@ export function toast({ text, sub, kind }) {
 export function showSummary(game, levelBefore, xpBefore) {
   const sum = game.summary();
   const stat = (v, label) => `<div><b>${v}</b><small>${label}</small></div>`;
-  $('s-title').textContent = sum.completed ? 'Workout complete 🎉' : 'Ride complete';
+  $('s-title').textContent = sum.completed ? 'Workout complete! 🎉' : 'Nice ride!';
   $('s-stats').innerHTML = [
     stat(fmtTime(sum.time), 'Time'),
-    stat((sum.distance / 1000).toFixed(1) + ' km', 'Virtual distance'),
+    stat((sum.distance / 1000).toFixed(1) + ' km', 'Distance'),
     stat(Math.round(sum.avgPower) + ' W', 'Avg power'),
-    stat(Math.round(sum.maxP5) + ' W', 'Best 5 s'),
+    stat(Math.round(sum.maxP5) + ' W', 'Best 5 seconds'),
     stat(sum.avgHr ? Math.round(sum.avgHr) + ' bpm' : '--', 'Avg HR'),
     stat(sum.maxHr ? sum.maxHr + ' bpm' : '--', 'Max HR'),
-    stat(Math.round(sum.kj) + ' kJ', 'Work'),
+    stat(Math.round(sum.kj) + ' kJ', 'Energy'),
     stat(sum.score.toLocaleString(), 'Points'),
     ...SPURS.filter((sp) => sum.detours?.[sp.id]).map((sp) => stat(`${sum.detours[sp.id]}×`, sp.name)),
   ].join('');

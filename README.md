@@ -11,7 +11,7 @@ A game layer for indoor cycling. Connect your smart trainer (or power meter) and
 python3 serve.py          # http://localhost:8000
 ```
 
-Open it in **Chrome or Edge** (Safari and Firefox have no Web Bluetooth). No build step and no dependencies. Click **Start with simulator** to try it without hardware.
+Open it in **Chrome or Edge** (Safari and Firefox have no Web Bluetooth). No build step and no dependencies. Click **Start with keyboard** to try it without hardware.
 
 Your trainer must allow a second Bluetooth connection (most modern FTMS trainers allow 2-3). Connect your recording device or head unit first if yours is strict. ANT+ is not supported.
 
@@ -30,7 +30,7 @@ Your trainer must allow a second Bluetooth connection (most modern FTMS trainers
 - **Stop pedalling and the ride stops.** After a second of coasting the rider brakes to a halt (even downhill), and after 3 seconds without pedalling the clock, workout and scoring pause until you pedal again.
 - **Power drives speed.** Real cycling physics (gradient, rolling resistance, air drag, drafting) moves you around the loop. Climbs slow you down, descents speed you up, and there is no speed limit: on the steep descent a heavy rider can coast past 80 km/h while a light one cannot. Drag area grows with weight but slower than weight itself, and riders tuck on descents, so weight helps downhill and hurts uphill.
 - **The world reacts.** Your aura takes your power-zone colour, sprints throw sparks, and the screen edges glow in your heart-rate zone and pulse with your actual heartbeat. The sky moves through a day and night cycle.
-- **Custom heart-rate zones.** Open "Heart-rate zones" under Rider in the menu to set the upper limit of each zone in bpm (from a lab test, field test or your watch). Until you change a number the zones follow Max HR (60, 70, 80 and 90%); "Reset" goes back to that.
+- **Custom heart-rate zones.** Open **More options** in the menu, then "Custom heart-rate zones", to set the upper limit of each zone in bpm (from a lab test, field test or your watch). Until you change a number the zones follow Max HR (60, 70, 80 and 90%); "Use standard zones" goes back to that.
 - **Zwift Click shifter.** Connect a Zwift Click from the menu and its right button shifts virtual gears harder and its left button easier (a "Swap buttons" option flips them). Gears only exist in a free ride with a controllable trainer; in ERG mode the buttons change the target power instead. A double click also chooses to go around the climb when the fork is near (see above). Both the original Click and the newer encrypted Click v2 are supported (the encrypted one is read using the community's published description of its handshake, `js/zwiftcrypto.js`). If your Click connects but does nothing, the grey log on its card in the menu shows what it is sending. Zwift Ride and Play controllers are not supported. Put the Click in pairing mode (press a button) and make sure Zwift or another app is not already connected to it.
 - **Workouts.** Structured sessions (sweet spot, threshold, VO2, sprints, pyramid, ...) show a target and a profile graph with your power drawn over it. A gold **Coach** rides the target power, so stay on their wheel. Hold the target to build a combo multiplier (x1 to x5).
 - **The pack.** Six bots ride the loop with their own pacing and attacks. Sit in their draft for a speed boost (the Drafting badge shows when it is on).
@@ -39,7 +39,7 @@ Your trainer must allow a second Bluetooth connection (most modern FTMS trainers
 
 The screen stays awake during a ride (Screen Wake Lock, where the browser supports it), so it won't dim or lock mid-workout.
 
-Simulator controls: `↑`/`↓` ±10 W, `PgUp`/`PgDn` ±50 W, hold `Space` to sprint, `P` toggles "stop pedalling", `M` mutes.
+Keyboard controls (when no trainer is connected): `↑`/`↓` ±10 W, `PgUp`/`PgDn` ±50 W, hold `Space` to sprint, `P` toggles "stop pedalling", `M` mutes.
 
 ## Export a ride (.fit)
 
@@ -80,6 +80,10 @@ There is no server yet, but the pieces that make remote riders possible are in p
 - **Wire format.** A small versioned JSON state sent about 10 times a second. Incoming states are validated and clamped, so a bad client can't inject NaNs or teleport. A real server should also check plausibility (speed against power) before relaying.
 - **Smooth remote motion.** Each remote rider is drawn about 150 ms in the past and interpolated between packets, with a brief extrapolation if one is late, and the sender's clock is estimated so jitter doesn't show.
 - **Try it.** Open `http://localhost:8000/?demo=remote` to ride with three simulated live riders arriving over a fake network with 90 ms latency and jitter. They appear in the sidebar with a cyan dot and in the 3D world.
+
+## Writing the popups and prompts
+
+Every message follows a few rules so riders can take it in at a glance while pedalling: one short sentence per idea, plain words (FTP and ERG are explained where they first appear), no more than two popups on screen at once, and every prompt says what to do next (the fork banner has a button, and its confirmation offers a way back). Extra detail lives in tooltips and under "More options", not in the main flow.
 
 ## Supported devices
 

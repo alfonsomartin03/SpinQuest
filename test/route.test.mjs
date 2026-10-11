@@ -138,8 +138,8 @@ test('game: the fork is announced 1 km out, can be chosen, and the road around i
   run(() => g.user.spur, 120);
   assert.ok(g.user.spur, 'turned onto the road around');
   const odo1 = g.user.x;
-  run(() => seen.includes('BACK ON THE LOOP'), 60 * 40, 300);
-  assert.ok(seen.includes('BACK ON THE LOOP'));
+  run(() => seen.includes('Back on the loop'), 60 * 40, 300);
+  assert.ok(seen.includes('Back on the loop'));
   assert.ok(!g.user.spur && g.spurDone === 1);
   assert.ok(Math.abs(g.user.x - odo1 - SPUR_LEN) < 40, 'the odometer counted the road around');
   assert.ok(g.user.c >= REJOIN && g.user.c < REJOIN + 40, 'came out after the descent');
@@ -266,12 +266,12 @@ test('game: Death Road is announced 1 km out, ridden to the start line, and coun
   g.toggleExtension(true);
   const seen = [];
   const lapStart = g.user.laps;
-  for (let i = 0; i < 20 * 60 * 90 && !seen.includes('DEATH ROAD DONE'); i++) {
+  for (let i = 0; i < 20 * 60 * 90 && !seen.includes('Death Road done!'); i++) {
     g.update(0.05, { power: 450, cadence: 90, hr: 150 });
     for (const e of g.drain()) if (e.type === 'toast') seen.push(e.text);
     if (g.user.spur && seen.length === 0) seen.push('(on it)');
   }
-  assert.ok(seen.includes('DEATH ROAD DONE'), `toasts: ${seen.join(', ')}`);
+  assert.ok(seen.includes('Death Road done!'), `toasts: ${seen.join(', ')}`);
   assert.ok(g.user.laps === lapStart + 1 && g.user.c < 100, 'came out at the start line');
   assert.deepEqual(g.summary().detours, { death: 1 });
   assert.ok(g.user.segTimes.death > 0, 'the Death Road climb segment was timed');
