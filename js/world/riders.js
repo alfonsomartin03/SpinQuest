@@ -99,7 +99,7 @@ function limb(r, t0 = 0, t1 = 1, { seg = 16, rings = 10, grow = 0, flat = 1 } = 
   return g;
 }
 
-const THIGH = radiusFn([[0, 0.082], [0.14, 0.1], [0.4, 0.103], [0.7, 0.078], [0.9, 0.056], [1, 0.05]]);
+const THIGH = radiusFn([[0, 0.078], [0.14, 0.094], [0.4, 0.098], [0.7, 0.075], [0.9, 0.054], [1, 0.049]]);
 const SHIN = radiusFn([[0, 0.05], [0.1, 0.054], [0.3, 0.061], [0.55, 0.047], [0.8, 0.034], [1, 0.03]]);
 const UPPER_ARM = radiusFn([[0, 0.058], [0.3, 0.055], [0.7, 0.046], [1, 0.038]]);
 const FOREARM = radiusFn([[0, 0.037], [0.25, 0.041], [0.7, 0.032], [1, 0.026]]);
@@ -167,6 +167,34 @@ function numberPlate(text, fg = '#1b1b1f', bg = '#ffffff') {
 export const SKINS = ['#f2c9a6', '#e3ad86', '#c98d63', '#9c6a44', '#6f4a32', '#ffdcb8'];
 export const HAIRS = ['#1f1710', '#4a3220', '#c79b4c', '#a8452a', '#171717', '#8d8d92', '#e3c067'];
 
+// How the rider sits: the saddle top is at SADDLE_Y + 0.023; the pelvis is sized so its underside just rests on it.
+const SADDLE_Y = 0.972;
+const SEAT_HIP = 1.09; // hip height when seated
+const HIP_RX = 0.108, HIP_RY = 0.097, HIP_RZ = 0.165;
+const JERSEY_LEAN = (58 * Math.PI) / 180; // the spine angle the jersey hem is draped level for
+
+/**
+ * Let the bottom of the jersey hang: the lowest rings of the torso tube are moved straight down (world space) in proportion to
+ * how far back they are, and straight up at the front, so the hem ends level over the hips instead of square to the leaning
+ * spine. `lean` is the spine angle the hem is cut level for; `top` is the lathe's height, used to keep the texture unchanged.
+ */
+function drapeHem(geo, lean, top) {
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  const sin = Math.sin(lean), cos = Math.cos(lean);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    uv.setY(i, Math.min(1, Math.max(0, y / top)));
+    const w = Math.min(1, Math.max(0, (0.14 - y) / 0.17)) ** 1.5;
+    if (w <= 0) continue;
+    const dy = x * sin * w; // the world-space height change that levels this part of the hem
+    pos.setX(i, x - sin * dy);
+    pos.setY(i, y + cos * dy);
+  }
+  pos.needsUpdate = true;
+  uv.needsUpdate = true;
+  geo.computeBoundingSphere();
+}
+
 /** Flat-coloured box lying along the line a..b (in the XY plane) and standing `z` out to the side: a frame decal. */
 function decal(a, b, z, w, color) {
   const dx = b[0] - a[0], dy = b[1] - a[1];
@@ -220,25 +248,38 @@ export class RiderModel {
       shoe: this.#shoe(L, i ? -1 : 1),
     }));
 
-    this.hips = ball(0.138, bibMat);
-    this.hips.scale.set(0.95, 0.78, 1.04);
+    // pelvis: a broad ellipsoid (wider than it is deep) in the bib shorts, sitting on the saddle with the thighs coming out of its sides
+    this.hips = mesh(new THREE.SphereGeometry(1, 22, 16), bibMat);
+    this.hips.scale.set(HIP_RX, HIP_RY, HIP_RZ);
 
-    // torso: an athletic V-taper (waist -> chest -> shoulders) so the kit wraps round it, with a collar and rear pockets
-    const prof = [[0.001, 0], [0.118, 0.012], [0.12, 0.09], [0.117, 0.19], [0.138, 0.3], [0.158, 0.4], [0.163, 0.47], [0.13, 0.535], [0.07, 0.565], [0.001, 0.575]].map(([r, y]) => new THREE.Vector2(r, y));
-    const torsoGeo = new THREE.LatheGeometry(prof, 32);
+    // torso: an athletic V-taper (waist -> chest -> shoulders) so the kit wraps round it. The jersey is cut with a level hem,
+    // so it hangs down over the hips at the back like real cloth instead of ending square to the spine
+    const bodyR = radiusFn([[-0.03, 0.14], [0.0, 0.141], [0.09, 0.13], [0.18, 0.119], [0.29, 0.136], [0.4, 0.157], [0.47, 0.163], [0.535, 0.13]]);
+    const prof = [];
+    for (let y = -0.03; y < 0.5351; y += 0.02) prof.push(new THREE.Vector2(bodyR(y), y));
+    prof.push(new THREE.Vector2(0.07, 0.565), new THREE.Vector2(0.001, 0.575));
+    const torsoGeo = new THREE.LatheGeometry(prof, 36);
     torsoGeo.scale(1, 1, 1.22);
+    drapeHem(torsoGeo, JERSEY_LEAN, 0.575);
     this.torsoGroup = new THREE.Group();
     this.body.add(this.torsoGroup);
     this.torsoMesh = mesh(torsoGeo, jerseyMat, this.torsoGroup);
     const collar = mesh(new THREE.CylinderGeometry(0.066, 0.078, 0.035, 14, 1, true), sleeveMat, this.torsoGroup);
     collar.position.set(0.012, 0.568, 0);
     this.torsoGroup.add(detail(collar));
-    const pockets = mergeGeometries([-0.078, 0, 0.078].map((z) => bake(new THREE.CapsuleGeometry(0.031, 0.05, 3, 8), L.jersey, { x: -0.108, y: 0.1, z, rx: Math.PI / 2, sx: 1, sy: 1, sz: 0.42 })));
+    // a flat pocket band across the lower back, with two seams
+    const pockets = mergeGeometries([
+      bake(new THREE.CapsuleGeometry(0.034, 0.25, 3, 8), L.jersey, { x: -0.121, y: 0.12, rx: Math.PI / 2, sx: 0.4 }),
+      ...[-0.047, 0.047].map((z) => bake(new THREE.BoxGeometry(0.006, 0.066, 0.004), '#101218', { x: -0.1335, y: 0.122, z })),
+    ]);
     const pk = new THREE.Mesh(pockets, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, color: '#d4d4d4' }));
     this.torsoGroup.add(detail(pk));
-    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), new THREE.MeshStandardMaterial({ map: numberPlate(L.number, L.isUser ? '#ff3b6b' : '#1b1b1f'), roughness: 0.6 }));
-    plate.position.set(-0.152, 0.31, 0);
-    plate.rotation.y = -Math.PI / 2;
+    // the race number is pinned on, so it curves with the back
+    const arc = 0.96;
+    const plateGeo = new THREE.CylinderGeometry(0.1425, 0.1425, 0.16, 14, 1, true, -Math.PI / 2 - arc / 2, arc);
+    plateGeo.scale(1, 1, 1.22);
+    const plate = new THREE.Mesh(plateGeo, new THREE.MeshStandardMaterial({ map: numberPlate(L.number, L.isUser ? '#ff3b6b' : '#1b1b1f'), roughness: 0.6, side: THREE.DoubleSide }));
+    plate.position.set(0, 0.31, 0);
     this.torsoGroup.add(detail(plate));
 
     // shoulders (sleeve caps) and arms: sleeve, cuff, bare lower arm, gloved hand wrapped round the hood
@@ -358,7 +399,7 @@ export class RiderModel {
     paint.push(decal([seatTop[0] + 0.045, seatTop[1] - 0.05], [0.0, 0.46], 0.0172, 0.009, ac));
 
     // components: seatpost, integrated cockpit, hoods, levers, computer
-    comp.push(tube([seatTop[0], seatTop[1], 0], [-0.2, 0.965, 0], 0.012, CARBON, 1.5, 0.75));
+    comp.push(tube([seatTop[0], seatTop[1], 0], [-0.2, SADDLE_Y - 0.02, 0], 0.012, CARBON, 1.5, 0.75));
     const spacer = htTop.clone().addScaledVector(down, -0.05);
     comp.push(tube([htTop.x, htTop.y, 0], [spacer.x, spacer.y, 0], 0.016, CARBON));
     comp.push(tube([spacer.x, spacer.y + 0.004, 0], [0.485, 0.948, 0], 0.016, CARBON, 1, 1.5));
@@ -374,8 +415,8 @@ export class RiderModel {
     comp.push(tube([0.52, 0.95, 0], [0.575, 0.965, 0], 0.007, CARBON));
 
     // saddle rails
-    for (const z of [-0.024, 0.024]) comp.push(tube([-0.31, 0.985, z], [-0.1, 0.99, z * 0.7], 0.0035, STEEL, 1, 1, 5));
-    comp.push(bake(new THREE.BoxGeometry(0.03, 0.012, 0.05), CARBON, { x: -0.2, y: 0.968 }));
+    for (const z of [-0.024, 0.024]) comp.push(tube([-0.31, SADDLE_Y, z], [-0.1, SADDLE_Y + 0.005, z * 0.7], 0.0035, STEEL, 1, 1, 5));
+    comp.push(bake(new THREE.BoxGeometry(0.03, 0.012, 0.05), CARBON, { x: -0.2, y: SADDLE_Y - 0.017 }));
 
     // drivetrain: rear mech and jockey wheels, chain, bottle cage and bottle
     comp.push(bake(new THREE.BoxGeometry(0.035, 0.05, 0.028), DARK, { x: REAR[0] - 0.012, y: 0.288, z: 0.072 }));
@@ -407,8 +448,8 @@ export class RiderModel {
     sad.rotateZ(-Math.PI / 2);
     sad.scale(1, 0.34, 1);
     const saddleGeo = mergeGeometries([
-      bake(sad, '#15171d', { x: -0.335, y: 0.985 }),
-      bake(new THREE.BoxGeometry(0.2, 0.004, 0.012), ac, { x: -0.19, y: 0.9985 }),
+      bake(sad, '#15171d', { x: -0.335, y: SADDLE_Y }),
+      bake(new THREE.BoxGeometry(0.2, 0.004, 0.012), ac, { x: -0.19, y: SADDLE_Y + 0.0135 }),
     ]);
     const saddle = new THREE.Mesh(saddleGeo, standard('#ffffff', { vertex: true, rough: 0.5 }));
     saddle.castShadow = true;
@@ -542,16 +583,16 @@ export class RiderModel {
     }
     this.ring.rotation.z = theta;
 
-    // pelvis: higher and further forward when standing, and the torso leans less
-    const hipY = 1.0 + 0.2 * st, hipX = -0.2 + 0.11 * st;
-    const lean = (64 - 22 * st) * (Math.PI / 180);
+    // pelvis: sat on the saddle with the sit bones just above it; out of the saddle it rises a little, moves forward and the torso drops toward the bars
+    const hipY = SEAT_HIP + 0.11 * st, hipX = -0.2 + 0.12 * st;
+    const lean = (56 + 3 * st) * (Math.PI / 180);
     const sway2 = Math.sin(crank) * 0.012;
     t.hipC.set(hipX, hipY, sway2);
     t.shoulderC.set(hipX + Math.sin(lean) * 0.52, hipY + Math.cos(lean) * 0.52 - 0.01 * Math.sin(crank * 2), sway2 * 1.5);
 
     for (let i = 0; i < 2; i++) {
       const side = i ? -1 : 1;
-      t.hip[i].set(hipX, hipY - 0.02, side * 0.088 + sway2);
+      t.hip[i].set(hipX, hipY - 0.02, side * 0.098 + sway2);
       const pitch = 0.22 * Math.sin(theta + (i ? Math.PI : 0) + 0.6); // ankling through the stroke
       t.ankle[i].set(t.pedal[i].x - 0.05, t.pedal[i].y + 0.1, t.pedal[i].z);
       ik(t.hip[i], t.ankle[i], 0.46, 0.44, t.pole.set(1, 0.12, side * 0.18), t.knee[i]);
@@ -583,13 +624,14 @@ export class RiderModel {
     }
 
     // pelvis, torso (fixed length, tilting about the hips), neck and head
-    this.hips.position.set(hipX, hipY - 0.03, sway2);
-    this.torsoGroup.position.set(t.hipC.x, t.hipC.y - 0.03, t.hipC.z);
+    this.hips.position.set(hipX - 0.006, hipY + 0.012, sway2);
+    this.hips.rotation.set(0, 0, -lean * 0.6);
+    this.torsoGroup.position.set(t.hipC.x, t.hipC.y - 0.02, t.hipC.z);
     this.torsoGroup.rotation.set(0, 0, -lean);
     this.torsoGroup.scale.set(1, 1 + Math.sin(this.time * 3.2) * 0.012, 1);
-    t.head.set(t.shoulderC.x + 0.1, t.shoulderC.y + 0.17 + Math.sin(crank * 2) * 0.004, t.shoulderC.z);
+    t.head.set(t.shoulderC.x + 0.085, t.shoulderC.y + 0.165 + Math.sin(crank * 2) * 0.004, t.shoulderC.z);
     this.headGroup.position.copy(t.head);
-    this.headGroup.rotation.z = 0.2 - 0.14 * st + Math.sin(crank) * 0.015;
+    this.headGroup.rotation.z = 0.26 - 0.16 * st + Math.sin(crank) * 0.015;
     t.neckBase.set(t.shoulderC.x + 0.02, t.shoulderC.y + 0.02, t.shoulderC.z);
     span(this.neck, t.neckBase, t.head);
     if (this.hair) this.hair.rotation.z = Math.sin(this.time * 7 + crank) * 0.22 + 0.15 + st * 0.3;
