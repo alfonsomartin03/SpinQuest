@@ -228,8 +228,10 @@ test('virtual gears: auto-shift follows the comfortable range', () => {
   assert.equal(inside.gear, 17, 'no shifting inside the range');
 
   const sprint = new VirtualGears({ auto: true });
-  for (let i = 0; i < 200; i++) sprint.update(0.1, 135);
-  assert.equal(sprint.gear, 17, 'sprints are left alone');
+  for (let i = 0; i < 30; i++) sprint.update(0.1, 135);
+  assert.equal(sprint.gear, 17, 'a sprint of a few seconds is left alone');
+  for (let i = 0; i < 100; i++) sprint.update(0.1, 135);
+  assert.ok(sprint.gear > 17, 'but spinning that fast for long is not a sprint');
 
   const custom = new VirtualGears({ auto: true, low: 70, high: 90 });
   for (let i = 0; i < 100; i++) custom.update(0.1, 76);

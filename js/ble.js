@@ -331,35 +331,51 @@ async function notify(service, charId, handler) {
  * Connect a smart trainer or power meter. `emit` receives partial {power, cadence, speed, hr}.
  * The returned link has `.control` (a TrainerControl) for resistance control.
  */
-export async function connectTrainer(emit, onStatus, { all = false, device = null } = {}) {
+export async function connectTrainer(emit, onStatus, { all = false, device = null, onLog = () => {} } = {}) {
   if (device) await awaken(device);
   device ||= await request('trainer', all);
+  onLog(`chose ${device.name || 'a device'}`);
   const cpState = {};
   const control = new TrainerControl();
+  let packets = 0, last = {}, timer = null;
+  // what the trainer is sending, once every couple of seconds, so a connected trainer that shows no power can be diagnosed
+  const report = () => {
+    const bits = [`${packets} packets`, last.power != null ? `power ${last.power} W` : 'no power in them', last.cadence != null ? `cadence ${Math.round(last.cadence)} rpm` : 'no cadence', last.speed != null ? `speed ${last.speed.toFixed(1)} km/h` : null].filter(Boolean);
+    onLog(`receiving: ${bits.join(' · ')}`, 'status');
+  };
+  const seen = (d) => { packets++; last = { ...last, ...Object.fromEntries(Object.entries(d).filter(([, v]) => v != null)) }; };
   const link = new Link(device, async (server) => {
     let ftmsPower = false;
     let ftmsPackets = 0;
     let cpsStarted = false;
+    clearInterval(timer);
+    timer = setInterval(report, 2000);
     const startCps = async () => {
       if (cpsStarted) return;
       cpsStarted = true;
       try {
         const cps = await server.getPrimaryService(UUID.CPS);
-        await notify(cps, UUID.CP_MEASUREMENT, (dv) => emit(parseCyclingPower(dv, cpState)));
-      } catch { /* no power service */ }
+        await notify(cps, UUID.CP_MEASUREMENT, (dv) => { const d = parseCyclingPower(dv, cpState); seen(d); emit(d); });
+        onLog('listening to its Cycling Power service');
+      } catch (err) { onLog(`no Cycling Power service (${err.name})`); }
     };
     try {
       const ftms = await server.getPrimaryService(UUID.FTMS);
+      onLog('found the Fitness Machine (FTMS) service');
       await notify(ftms, UUID.INDOOR_BIKE_DATA, (dv) => {
         const d = parseIndoorBikeData(dv);
         ftmsPackets++;
         if (d.power != null) ftmsPower = true;
-        if (ftmsPackets === 4 && !ftmsPower) startCps(); // FTMS without power: fall back to CPS
+        if (ftmsPackets === 1) onLog(`first reading: ${Object.entries(d).map(([k, v]) => `${k} ${v}`).join(', ') || 'nothing we understand'}`);
+        if (ftmsPackets === 4 && !ftmsPower) { onLog('its readings carry no power, so also trying Cycling Power'); startCps(); } // FTMS without power: fall back to CPS
+        seen(d);
         emit(d);
       });
-      await control.attach(ftms);
+      onLog('listening to Indoor Bike Data');
+      try { await control.attach(ftms); onLog('resistance control attached'); } catch (err) { onLog(`resistance control not available (${err.message})`); }
+      setTimeout(() => { if (!ftmsPackets && !link.closed) onLog('no readings yet. Pedal to wake the trainer. If it still says nothing, another app (Zwift, a phone) may be using it.'); }, 6000);
       return;
-    } catch { /* no FTMS */ }
+    } catch (err) { onLog(`no usable FTMS service (${err.name}: ${err.message})`); }
     await startCps();
     if (!cpsStarted) throw new Error('No supported power service on this device');
   }, onStatus);
@@ -399,16 +415,16 @@ export async function connectClick(onShift, onStatus, { all = false, device = nu
     const svc = await server.getPrimaryService(ZWIFT.SERVICE).catch((err) => { onLog(`no Zwift service on it (${err.name}). Is this the Click?`); throw err; });
     const held = {}; // which buttons are down, so a held button fires once
     const press = (plus, minus) => {
-      if (plus && !held.plus) onShift(1);
-      if (minus && !held.minus) onShift(-1);
+      if (plus && !held.plus) { onLog('press: + (harder)'); onShift(1); }
+      if (minus && !held.minus) { onLog('press: - (easier)'); onShift(-1); }
       held.plus = plus; held.minus = minus;
     };
-    const session = new ZapSession();
-    let frames = 0;
+    let session = new ZapSession();
+    let frames = 0, fails = 0, retries = 0;
     const handle = (via) => async (dv) => {
       frames++;
       const bytes = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
-      onLog(`${via}: ${hex(dv)}`);
+      if (!session.recipe) onLog(`${via}: ${hex(dv)}`); // once messages decrypt, only the readable result is logged
       try {
         if (ZapSession.isReply(bytes)) {
           await session.accept(bytes);
@@ -416,16 +432,28 @@ export async function connectClick(onShift, onStatus, { all = false, device = nu
         } else if (bytes.length >= 6 && bytes.slice(0, 6).every((b, i) => b === ZWIFT.RIDE_ON[i])) {
           onLog('it answered the plain greeting');
         } else if (session.ready && bytes.length > 8) {
+          const had = session.recipe;
           const plain = await session.decrypt(bytes);
+          if (!had && session.recipe) onLog(`decrypted it (${session.recipe.name})`);
           const buttons = clickButtonsFrom(plain);
           if (buttons) press(buttons.plus, buttons.minus);
-          else onLog(`  (message type ${plain[0].toString(16)}, not a button)`);
+          else if (plain[0] === 0x19) { if (plain[2] !== held.battery) { held.battery = plain[2]; onLog(`battery ${plain[2]}%`); } }
+          else onLog(`(message type ${plain[0].toString(16)}: ${hex(new DataView(plain.buffer))})`);
         } else {
           const hits = parseClickButtons(dv, held.plain ??= {});
           for (const b of hits) onShift(b === 'plus' ? 1 : -1);
           if (!hits.length) onRaw?.(hex(dv));
         }
-      } catch (err) { onLog(`  could not read it: ${err.message}`); }
+        fails = 0;
+      } catch (err) {
+        onLog(`  could not read it: ${err.message}`);
+        // a link whose messages will not open usually started from a handshake that got muddled: start again with fresh keys
+        if (session.ready && ++fails >= 3 && retries < 2) {
+          retries++; fails = 0;
+          onLog('messages are not opening, so starting the handshake again');
+          await handshake().catch((e) => onLog(`encrypted handshake failed: ${e.message}`));
+        }
+      }
     };
     // List what the Click offers, then listen on everything that can notify, so nothing it says is missed.
     const chars = await svc.getCharacteristics().catch(() => []);
@@ -445,13 +473,17 @@ export async function connectClick(onShift, onStatus, { all = false, device = nu
     };
     const waitFor = async (ms, until) => { const end = performance.now() + ms; while (performance.now() < end && !until()) await new Promise((r) => setTimeout(r, 100)); };
     // 1. the encrypted handshake (a long write, so with a response)
-    try {
+    const handshake = async () => {
+      session = new ZapSession();
       await write(await session.start(), 'response');
       onLog('sent the encrypted handshake');
-      await waitFor(2500, () => session.ready);
+    };
+    try {
+      await handshake();
+      await waitFor(6000, () => session.ready || frames > 0); // some Clicks take a few seconds to answer
     } catch (err) { onLog(`encrypted handshake failed: ${err.message}`); }
-    // 2. otherwise the plain greeting, the way the original Click is started
-    if (!session.ready) {
+    // 2. only if it has said nothing at all: the plain greeting, the way the original Click is started
+    if (!session.ready && !frames) {
       for (const how of ['without response', 'response']) {
         try { await write(ZWIFT.RIDE_ON, how === 'response' ? 'response' : 'none'); onLog(`sent RideOn (${how})`); } catch (err) { onLog(`RideOn ${how} failed: ${err.message}`); continue; }
         await waitFor(1500, () => frames > 0);

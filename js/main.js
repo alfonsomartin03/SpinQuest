@@ -3,19 +3,19 @@
 import { Renderer } from './world/scene3d.js';
 import { Game } from './game.js';
 import { Hud, toast, showSummary, drawWorkoutProfile } from './hud.js';
-import { WORKOUTS } from './workouts.js';
+import { WORKOUTS, ergWorkout } from './workouts.js';
 import { Sim } from './sim.js';
 import {
   DataHub, connectTrainer, connectHeartRate, connectClick, bluetoothSupported, bluetoothProblem, explainError, getKnownDevices,
 } from './ble.js';
-import { VirtualGears, ResistanceControl, ergGuard, slew } from './gearing.js';
+import { VirtualGears, GearResistance, ergGuard, slew } from './gearing.js';
 import { LoopbackSession, DemoPeers } from './net.js';
 import { initAudio, sfx, setMuted, isMuted } from './audio.js';
 import { ACHIEVEMENTS } from './achievements.js';
 import { LANDMARKS } from './course.js';
 import { DoubleClick } from './click.js';
 import { buildFit, fitFileName, PLACES, MIN_SECONDS } from './export.js';
-import { levelFor, levelTitle, xpForLevel, defaultHrLimits, cleanHrLimits } from './physics.js';
+import { levelFor, levelTitle, xpForLevel, defaultHrLimits, cleanHrLimits, clamp } from './physics.js';
 
 window.__sqLoaded = true;
 // ?debug=1 exposes the running game on window.__sq, for poking at it from the console
@@ -30,7 +30,15 @@ const store = {
   },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
 };
-const profile = store.get('spinquest.profile', { name: '', weight: 75, ftp: 200, maxHr: 190, workout: 'free', control: 'gears', autoShift: true, cadLow: 80, cadHigh: 100, hrLimits: null, clickSwap: false });
+const profile = store.get('spinquest.profile', { name: '', weight: 75, ftp: 200, maxHr: 190, mode: 'free', shift: 'auto', ergWatts: null, workout: null, control: 'on', cadLow: 80, cadHigh: 100, hrLimits: null, clickSwap: false });
+const STRUCTURED = WORKOUTS.filter((w) => w.steps.length);
+// settings saved by earlier versions: a structured workout meant workout mode, "listen only" meant no resistance control
+if (!profile.mode) {
+  profile.mode = profile.workout && profile.workout !== 'free' && STRUCTURED.some((w) => w.id === profile.workout) ? 'workout' : 'free';
+  profile.shift = profile.autoShift === false ? 'manual' : 'auto';
+  profile.control = profile.control === 'off' ? 'off' : 'on';
+}
+if (!STRUCTURED.some((w) => w.id === profile.workout)) profile.workout = STRUCTURED[0].id;
 const progress = store.get('spinquest.progress', { xp: 0, rides: 0, km: 0 });
 const known = store.get('spinquest.devices', {}); // last-used device per kind, for one-tap reconnect
 progress.ach ||= {};
@@ -70,6 +78,7 @@ function stopNet() { net?.off(); net = null; }
 let gears = null;
 let resist = null;
 let ctlActive = false;
+let rideMode = 'free'; // the mode this ride started in: free | erg | workout
 let cadSmooth = 0;
 let cadFast = 0;
 let cmdWatts = null;
@@ -99,14 +108,18 @@ function showHrLimits() {
 
 function readProfile() {
   const num = (id, lo, hi, d) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+  const checked = (name, fallback) => document.querySelector(`input[name=${name}]:checked`)?.value ?? fallback;
+  const ftp = num('p-ftp', 50, 600, 200);
   Object.assign(profile, {
     name: $('p-name').value.trim(),
     weight: num('p-weight', 30, 200, 75),
-    ftp: num('p-ftp', 50, 600, 200),
+    ftp,
     maxHr: num('p-maxhr', 120, 230, 190),
-    workout: $('workout').value,
-    control: document.querySelector('input[name=ctlmode]:checked')?.value ?? profile.control,
-    autoShift: $('autoshift').checked,
+    mode: checked('ridemode', profile.mode),
+    shift: checked('shiftmode', profile.shift),
+    ergWatts: num('erg-watts', 30, 1000, Math.round((profile.ergWatts ?? 0.6 * ftp) / 5) * 5),
+    workout: $('workout').value || profile.workout,
+    control: $('resist-on').checked ? 'on' : 'off',
     cadLow: num('cad-low', 50, 110, 80),
     cadHigh: num('cad-high', 60, 130, 100),
     hrLimits: readHrLimits(),
@@ -124,11 +137,12 @@ function fillMenu() {
   $('p-maxhr').value = profile.maxHr;
   showHrLimits();
   $('click-swap').checked = !!profile.clickSwap;
-  $('workout').innerHTML = WORKOUTS.map((w) => `<option value="${w.id}">${w.name}</option>`).join('');
-  $('workout').value = WORKOUTS.some((w) => w.id === profile.workout) ? profile.workout : 'free';
-  const radio = document.querySelector(`input[name=ctlmode][value=${profile.control}]`);
-  if (radio) radio.checked = true;
-  $('autoshift').checked = profile.autoShift !== false;
+  $('workout').innerHTML = STRUCTURED.map((w) => `<option value="${w.id}">${w.name}</option>`).join('');
+  $('workout').value = profile.workout;
+  document.querySelector(`input[name=ridemode][value=${profile.mode}]`).checked = true;
+  document.querySelector(`input[name=shiftmode][value=${profile.shift}]`).checked = true;
+  $('erg-watts').value = Math.round((profile.ergWatts ?? 0.6 * profile.ftp) / 5) * 5;
+  $('resist-on').checked = profile.control !== 'off';
   $('cad-low').value = profile.cadLow;
   $('cad-high').value = profile.cadHigh;
   refreshMenu();
@@ -139,9 +153,10 @@ const canControl = () => ['idle', 'requesting', 'ready'].includes(controlState()
 
 function refreshMenu() {
   const p = readProfile();
-  const w = WORKOUTS.find((x) => x.id === p.workout);
+  const w = STRUCTURED.find((x) => x.id === p.workout) ?? STRUCTURED[0];
   $('workout-desc').textContent = w.desc;
   drawWorkoutProfile($('workout-preview'), w, p.ftp);
+  document.querySelectorAll('.modebox').forEach((box) => { box.hidden = box.dataset.for !== p.mode; });
   const lvl = levelFor(progress.xp);
   $('m-level').textContent = `Level ${lvl}`;
   $('m-title').textContent = levelTitle(lvl);
@@ -149,16 +164,25 @@ function refreshMenu() {
   $('m-xp').textContent = `${progress.xp.toLocaleString()} XP · ${Object.keys(progress.ach).length}/${ACHIEVEMENTS.length} achievements · ${Object.keys(progress.discovered).length}/${LANDMARKS.length} landmarks`;
   let hint = 'No trainer connected: you will ride with the keyboard simulator.';
   if (links.trainer) {
-    if (canControl() && p.control === 'gears') hint = 'Cadence control on: resistance keeps you in your cadence range. Shift with ← → or the + − buttons.';
-    else if (canControl() && p.control === 'erg') hint = 'ERG on: the trainer holds each workout interval for you.';
-    else hint = 'Set your trainer power yourself. SpinQuest only listens.';
+    if (canControl() && p.control !== 'off') {
+      hint = {
+        free: p.shift === 'auto'
+          ? 'Free ride, auto-shift: SpinQuest picks the gear to keep your cadence in range. Power is yours, so steep climbs can make you grind.'
+          : 'Free ride, you shift: use the Zwift Click, the + − buttons or ← →. Nothing shifts for you.',
+        erg: `ERG mode: the trainer holds ${p.ergWatts} W. + − (or the Click) change it by 10 W.`,
+        workout: 'Workout mode: the trainer holds each interval for you.',
+      }[p.mode];
+    } else hint = 'Set your trainer power yourself. SpinQuest only listens.';
   }
   $('start-hint').textContent = hint;
   $('start').textContent = links.trainer ? 'Start ride' : 'Start with simulator';
-  $('autoshift').closest('label').hidden = p.control !== 'gears';
-  $('cadrange').hidden = p.control !== 'gears';
-  $('cadrange').classList.toggle('off', !p.autoShift);
-  $('cad-low').disabled = $('cad-high').disabled = !p.autoShift;
+  // the cadence range steers auto-shift, and guards ERG and workout targets against grinding
+  const autoOn = p.mode === 'free' && p.shift === 'auto';
+  $('cadrange').classList.toggle('off', p.mode === 'free' && !autoOn);
+  $('cad-low').disabled = $('cad-high').disabled = p.mode === 'free' && !autoOn;
+  $('cad-note').textContent = autoOn ? 'Auto-shift goes easier when you drop below the first number and harder when you go above the second.'
+    : p.mode === 'free' ? 'Not used while you shift yourself.'
+      : 'If your cadence falls below the first number the trainer eases its target so you are never left grinding.';
 }
 // HR zones: typing in a zone box makes them custom; until then they follow Max HR
 [1, 2, 3, 4].forEach((i) => $(`hrz-${i}`).addEventListener('input', () => {
@@ -190,8 +214,8 @@ function updateControlUi() {
     none: `${c?.reason || 'This device cannot be controlled.'} SpinQuest will listen only.`,
     idle: 'Your trainer supports resistance control.',
     requesting: 'Taking control of your trainer…',
-    ready: 'You have control of your trainer. Resistance will follow the game.',
-    denied: `${c?.reason || 'Control was refused.'} Close other apps that control it, or choose Listen only.`,
+    ready: 'You have control of your trainer. Resistance follows your ride mode.',
+    denied: `${c?.reason || 'Control was refused.'} Close other apps that control it, or untick the box below.`,
   }[st] || '';
   refreshMenu();
 }
@@ -235,7 +259,7 @@ async function connectDevice(kind, opts = {}) {
   card.querySelector('[data-all]').hidden = true;
   try {
     const emit = kind === 'click' ? onClickButton : (f) => hub.push(f);
-    const link = await { trainer: connectTrainer, hr: connectHeartRate, click: connectClick }[kind](emit, ui, { all: opts.all ?? $('show-all').checked, device: opts.device, onRaw: kind === 'click' ? onClickFrame : undefined, onLog: kind === 'click' ? logClick : undefined });
+    const link = await { trainer: connectTrainer, hr: connectHeartRate, click: connectClick }[kind](emit, ui, { all: opts.all ?? $('show-all').checked, device: opts.device, onRaw: kind === 'click' ? onClickFrame : undefined, onLog: kind === 'click' ? logClick : kind === 'trainer' ? logTrainer : undefined });
     links[kind] = link;
     known[kind] = { id: link.device.id, name: link.name };
     store.set('spinquest.devices', known);
@@ -285,17 +309,48 @@ offerKnownDevices();
 
 function showGear(flash = false) {
   const box = $('h-gear');
-  box.hidden = !(ctlActive && profile.control === 'gears');
+  const gearsOn = ctlActive && rideMode === 'free';
+  const ergOn = rideMode === 'erg' && game?.workout.erg;
+  box.hidden = !(gearsOn || ergOn);
   if (box.hidden) return;
-  $('g-num').textContent = String(gears.gear);
-  const rpm = Math.round(cadSmooth);
-  $('g-info').textContent = `${gears.ratio.toFixed(2)} · ${rpm || '--'} rpm${gears.auto ? ` · auto ${gears.low}–${gears.high}` : ''}`;
-  box.classList.toggle('sweet', rpm >= gears.low && rpm <= gears.high);
+  $('g-down').title = ergOn ? 'Lower the target (−10 W)' : 'Easier gear (←)';
+  $('g-up').title = ergOn ? 'Raise the target (+10 W)' : 'Harder gear (→)';
+  if (ergOn) {
+    $('g-label').textContent = 'W target';
+    $('g-num').textContent = String(ergWatts());
+    $('g-info').textContent = ctlActive ? 'the trainer holds this' : 'simulator follows this';
+    box.classList.remove('sweet');
+  } else {
+    $('g-label').textContent = 'gear';
+    $('g-num').textContent = String(gears.gear);
+    const rpm = Math.round(cadSmooth);
+    $('g-info').textContent = `${gears.ratio.toFixed(2)} · ${rpm || '--'} rpm${gears.auto ? ` · auto ${gears.low}–${gears.high}` : ' · you shift'}`;
+    box.classList.toggle('sweet', rpm >= gears.low && rpm <= gears.high);
+  }
   if (flash) { box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash'); }
 }
 
+/** The power ERG mode is holding (it lives in the workout's one step, as a fraction of FTP). */
+const ergWatts = () => Math.round(game.workout.steps[0].to * game.profile.ftp);
+
+/** + / − in ERG mode: nudge the target by 10 W. */
+function adjustErg(dir) {
+  const step = game?.workout.steps[0];
+  if (!step) return false;
+  const watts = clamp(ergWatts() + dir * 10, 30, 1000);
+  step.from = step.to = watts / game.profile.ftp;
+  profile.ergWatts = watts;
+  $('erg-watts').value = watts;
+  store.set('spinquest.profile', profile);
+  sfx('step');
+  showGear(true);
+  return true;
+}
+
+/** + / − on the Click, the buttons or the keys: change gear in a free ride, or the target in ERG mode. Returns whether anything changed. */
 function shiftGear(dir) {
-  if (!ctlActive || !gears || profile.control !== 'gears') return false;
+  if (mode === 'ride' && rideMode === 'erg') return adjustErg(dir);
+  if (!ctlActive || !gears || rideMode !== 'free') return false;
   if (gears.shift(dir)) { sfx('step'); showGear(true); return true; }
   return false;
 }
@@ -313,16 +368,22 @@ function noteClick(text) {
   note.textContent = text;
 }
 /** The Click card keeps a short log of what the Click is doing (also in the console), visible whether or not gears are on. */
-const clickLog = [];
-function logClick(text) {
-  console.debug('Zwift Click:', text);
-  clickLog.push(text);
-  if (clickLog.length > 22) clickLog.shift();
-  const card = $('dev-click');
-  let pre = card.querySelector('[data-log]');
-  if (!pre) { pre = document.createElement('pre'); pre.dataset.log = ''; pre.className = 'click-log'; card.querySelector('[data-connect]').before(pre); }
-  pre.textContent = clickLog.join('\n');
+const deviceLogs = {};
+function makeLogger(kind, label) {
+  const lines = (deviceLogs[kind] = []);
+  return (text, as) => {
+    console.debug(`${label}:`, text);
+    if (as === 'status' && lines.at(-1)?.startsWith('receiving:')) lines.pop(); // the live line updates in place
+    lines.push(text);
+    if (lines.length > 22) lines.shift();
+    const card = $(CARD[kind]);
+    let pre = card.querySelector('[data-log]');
+    if (!pre) { pre = document.createElement('pre'); pre.dataset.log = ''; pre.className = 'click-log'; card.querySelector('[data-connect]').before(pre); }
+    pre.textContent = lines.join('\n');
+  };
 }
+const logClick = makeLogger('click', 'Zwift Click');
+const logTrainer = makeLogger('trainer', 'Trainer');
 function onClickFrame(hex) { console.debug('Zwift Click frame (not a button press we know):', hex); noteClick(`Click sent something unfamiliar: ${hex}`); }
 let lastWhy = -9999;
 /** Why a press did nothing, once in a while, so the rider isn't left guessing. */
@@ -330,14 +391,15 @@ function explainNoGears() {
   if (mode !== 'ride' || performance.now() - lastWhy < 6000) return;
   lastWhy = performance.now();
   const why = useSim ? 'Gears need a connected, controllable trainer. You are on the simulator.'
-    : profile.control !== 'gears' ? 'Gears only work in "Cadence control" mode (see the menu).'
-      : 'The trainer is not under SpinQuest control, so there are no virtual gears.';
+    : rideMode === 'workout' ? 'Workout mode has no gears: the trainer holds each interval.'
+      : profile.control === 'off' ? 'You told SpinQuest not to control the trainer, so there are no virtual gears.'
+        : 'The trainer is not under SpinQuest control, so there are no virtual gears.';
   toast({ text: 'Click pressed', sub: why, kind: 'combo' });
 }
 
 function onClickButton(dir) {
   const step = profile.clickSwap ? -dir : dir;
-  noteClick(`Last press: ${step > 0 ? 'harder (+)' : 'easier (−)'}${ctlActive ? '' : ' · no gears this ride'}`);
+  noteClick(`Last press: ${step > 0 ? 'harder (+)' : 'easier (−)'}${rideMode === 'erg' ? ' · ERG target' : ctlActive && rideMode === 'free' ? '' : ' · no gears this ride'}`);
   const res = clicks.press(performance.now(), mode === 'ride' && game?.extension().state === 'approach');
   if (res.double) {
     if (res.undo) shiftGear(-res.undo);
@@ -345,7 +407,7 @@ function onClickButton(dir) {
     return;
   }
   const shifted = shiftGear(step);
-  if (!shifted && !(ctlActive && gears && profile.control === 'gears')) explainNoGears();
+  if (!shifted && !(ctlActive && gears && rideMode === 'free')) explainNoGears();
   clicks.record(shifted ? step : 0);
 }
 $('g-up').addEventListener('click', () => shiftGear(+1));
@@ -353,10 +415,10 @@ $('g-down').addEventListener('click', () => shiftGear(-1));
 
 /**
  * Each frame: decide what resistance to ask the trainer for.
- *  - Virtual gears: a cadence-band controller. Resistance holds while your cadence is inside your range, firms up
- *    only when you reach the top of it (you are pushing harder) and eases off when cadence drops (you are easing
- *    off or grinding). It never tries to hold a power at the cost of your cadence.
- *  - ERG: holds the workout's watts, but eases the target if cadence falls below your range.
+ *  - Free ride: the road's own resistance through your virtual gear (see GearResistance). Auto-shift, if it is on, changes
+ *    the gear to keep your cadence in range; it never touches the power. Terrain therefore matters.
+ *  - ERG and workout modes: the trainer holds the target power, eased if your cadence falls below your range so you can't
+ *    be pinned grinding.
  */
 function driveTrainer(dt) {
   const c = links.trainer?.control;
@@ -367,16 +429,12 @@ function driveTrainer(dt) {
   cadFast += (cad - cadFast) * (1 - Math.exp(-dt / 0.3));
   if (c.state !== 'ready') { showGear(); return; }
 
-  let want;
-  const erg = profile.control === 'erg' && game.target;
-  const ctx = { grade: game.grade, mass: game.mass, drag: game.user.drag };
+  let want = 0;
   if (game.finished || game.paused) want = 0;
-  else if (erg) want = ergGuard(game.wo ? game.wo.watts : game.target.watts, cadFast, gears.low);
+  else if (rideMode !== 'free') want = game.target ? ergGuard(game.wo ? game.wo.watts : game.target.watts, cadFast, gears.low) : 0;
   else {
-    const before = resist.physics(ctx);
-    const dir = gears.update(dt, cadSmooth);
-    if (dir) { resist.compensate(before, resist.physics(ctx)); sfx('step'); showGear(true); } // auto-shifts don't jolt the feel
-    want = resist.update(dt, cad, ctx);
+    if (gears.update(dt, cadSmooth)) { sfx('step'); showGear(true); }
+    want = resist.update(dt, cad, { grade: game.grade, mass: game.mass, drag: game.user.drag });
   }
   cmdWatts = slew(cmdWatts, Math.min(want, 2000), dt, 600);
   sendTimer += dt;
@@ -431,7 +489,8 @@ function startRide() {
   fit = null; // the previous ride's file is deleted if it was never downloaded
   $('m-fit').hidden = $('m-fit-note').hidden = true;
   const p = readProfile();
-  const workout = WORKOUTS.find((w) => w.id === p.workout);
+  rideMode = p.mode;
+  const workout = rideMode === 'erg' ? ergWorkout(p.ergWatts, p.ftp) : rideMode === 'workout' ? (STRUCTURED.find((w) => w.id === p.workout) ?? STRUCTURED[0]) : WORKOUTS[0];
   useSim = !links.trainer;
   sim = new Sim(p);
   game = new Game({ profile: { ...p, name: p.name || 'You' }, workout, progress });
@@ -439,8 +498,8 @@ function startRide() {
   game.levelAtStart = levelFor(progress.xp);
 
   ctlActive = !useSim && canControl() && p.control !== 'off';
-  gears = new VirtualGears({ auto: p.autoShift, low: p.cadLow, high: p.cadHigh });
-  resist = new ResistanceControl(gears, p.ftp);
+  gears = new VirtualGears({ auto: rideMode === 'free' && p.shift === 'auto', low: p.cadLow, high: p.cadHigh });
+  resist = new GearResistance(gears);
   cadSmooth = 0;
   cadFast = 0;
   cmdWatts = null;
@@ -498,7 +557,7 @@ addEventListener('beforeunload', () => { saveProgress(); links.trainer?.control?
 addEventListener('keydown', (e) => {
   if (mode !== 'ride') return;
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
-  if (ctlActive) {
+  if (ctlActive || rideMode === 'erg') {
     if (e.key === 'ArrowRight' || e.key === '.') { shiftGear(+1); e.preventDefault(); }
     if (e.key === 'ArrowLeft' || e.key === ',') { shiftGear(-1); e.preventDefault(); }
   }

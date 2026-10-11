@@ -103,21 +103,42 @@ export async function ccmDecrypt(key, nonce, data, { aad = new Uint8Array(0), ta
 
 // ---- the session with a controller -----------------------------------------------------------------------------------
 
-/** Derive the key and IV the way the controller does. Exposed so a test can play the controller's part. */
-export async function deriveKeys(privateKey, theirPublicRaw64, theirKeyFirst, ourPublicRaw64) {
+const SALTS = ['theirs-first', 'ours-first', 'none'];
+const LAYOUTS = ['key-iv', 'iv-key'];
+
+/**
+ * Derive a key and IV from the ECDH secret. The published description gives one recipe (salt = the controller's public key
+ * then ours, 32-byte key then 4-byte IV), but it was read second-hand, so the session also knows the other plausible
+ * recipes and uses whichever one a real message turns out to be sealed with. `salt` and `layout` pick the recipe.
+ */
+export async function deriveKeys(privateKey, theirPublicRaw64, theirKeyFirst, ourPublicRaw64, { salt = null, layout = 'key-iv' } = {}) {
   const theirs = await subtle.importKey('raw', concat(Uint8Array.of(0x04), theirPublicRaw64), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
   const secret = await subtle.deriveBits({ name: 'ECDH', public: theirs }, privateKey, 256);
-  const hkdfKey = await subtle.importKey('raw', secret, 'HKDF', false, ['deriveBits']);
-  const salt = theirKeyFirst ? concat(theirPublicRaw64, ourPublicRaw64) : concat(ourPublicRaw64, theirPublicRaw64);
-  const bits = new Uint8Array(await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info: new Uint8Array(0) }, hkdfKey, HKDF_BYTES * 8));
-  return { key: bits.slice(0, 32), iv: bits.slice(32, 36) };
+  const mode = salt ?? (theirKeyFirst ? 'theirs-first' : 'ours-first');
+  return hkdfSplit(secret, theirPublicRaw64, ourPublicRaw64, mode, layout);
 }
+
+async function hkdfSplit(secret, theirs, ours, mode, layout) {
+  const hkdfKey = await subtle.importKey('raw', secret, 'HKDF', false, ['deriveBits']);
+  const saltBytes = mode === 'theirs-first' ? concat(theirs, ours) : mode === 'ours-first' ? concat(ours, theirs) : new Uint8Array(0);
+  const bits = new Uint8Array(await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: saltBytes, info: new Uint8Array(0) }, hkdfKey, HKDF_BYTES * 8));
+  return layout === 'key-iv' ? { key: bits.slice(0, 32), iv: bits.slice(32, 36) } : { iv: bits.slice(0, 4), key: bits.slice(4, 36) };
+}
+
+/** Ways the 8-byte nonce could be put together from the IV and the message's 4 counter bytes. */
+const NONCES = {
+  'iv+counter': (iv, c) => concat(iv, c),
+  'iv+counter reversed': (iv, c) => concat(iv, c.slice().reverse()),
+  'counter+iv': (iv, c) => concat(c, iv),
+  'counter reversed+iv': (iv, c) => concat(c.slice().reverse(), iv),
+};
 
 export class ZapSession {
   constructor() {
     this.ready = false;
     this.key = null;
     this.iv = null;
+    this.recipe = null; // which of the recipes above a message verified with
   }
 
   /** Make our key pair and the message that starts the handshake. */
@@ -131,23 +152,40 @@ export class ZapSession {
   /** Is this the controller's answer to the handshake? */
   static isReply(data) { return data.length >= 8 && startsWith(data, RIDE_ON) && data[6] === RESPONSE_START[0]; }
 
-  /** Take the controller's public key from its reply and work out the shared key. */
+  /** Take the controller's public key from its reply and work out the shared secret. */
   async accept(reply) {
     if (!ZapSession.isReply(reply)) throw new Error('not a handshake reply');
     const theirs = reply.slice(8);
     if (theirs.length < KEY_BYTES) throw new Error(`reply carries ${theirs.length} bytes of key, expected ${KEY_BYTES}`);
-    const { key, iv } = await deriveKeys(this.pair.privateKey, theirs.slice(0, KEY_BYTES), true, this.publicKey);
-    this.key = key;
-    this.iv = iv;
+    this.theirs = theirs.slice(0, KEY_BYTES);
+    const key = await subtle.importKey('raw', concat(Uint8Array.of(0x04), this.theirs), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    this.secret = await subtle.deriveBits({ name: 'ECDH', public: key }, this.pair.privateKey, 256);
+    this.recipe = null;
     this.ready = true;
   }
 
-  /** Decrypt one message: <4-byte counter> <ciphertext> <tag>. Returns the plain bytes (first byte = message type). */
+  /**
+   * Decrypt one message: <4-byte counter> <ciphertext> <tag>. Returns the plain bytes (first byte = message type). Until a
+   * message has verified, every recipe is tried; the first that checks out (a 32-bit tag, so it cannot be a fluke) is kept.
+   */
   async decrypt(data) {
     if (!this.ready) throw new Error('no key yet');
     if (data.length <= 4 + TAG_BYTES) throw new Error('too short to be an encrypted message');
-    const nonce = concat(this.iv, data.slice(0, 4));
-    return ccmDecrypt(this.key, nonce, data.slice(4));
+    const counter = data.slice(0, 4), body = data.slice(4);
+    if (this.recipe) return ccmDecrypt(this.recipe.key, this.recipe.nonce(this.recipe.iv, counter), body);
+    for (const salt of SALTS) {
+      for (const layout of LAYOUTS) {
+        const { key, iv } = await hkdfSplit(this.secret, this.theirs, this.publicKey, salt, layout);
+        for (const [form, nonce] of Object.entries(NONCES)) {
+          try {
+            const plain = await ccmDecrypt(key, nonce(iv, counter), body);
+            this.recipe = { key, iv, nonce, name: `salt ${salt}, ${layout}, nonce ${form}` };
+            return plain;
+          } catch { /* not this one */ }
+        }
+      }
+    }
+    throw new Error('authentication failed (no known recipe fits)');
   }
 }
 

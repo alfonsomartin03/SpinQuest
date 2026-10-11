@@ -60,15 +60,7 @@
     <section class="device ctl" id="ctl" hidden>
       <div class="dev-head"><h3>Trainer resistance</h3></div>
       <p class="small" id="ctl-note"></p>
-      <label class="radio"><input type="radio" name="ctlmode" value="gears" checked><span><b>Cadence control</b> Gently holds your cadence near the middle of your range with a Zwift Cog or any fixed gear. Resistance makes small, quick adjustments: it firms up a little as you speed up and eases as you slow, so you never lock up, grind or spin out.</span></label>
-      <label class="radio"><input type="radio" name="ctlmode" value="erg"><span><b>ERG</b> The trainer holds each workout interval's power for you, with a guard that eases it if you start grinding below your cadence range. Free rides use cadence control.</span></label>
-      <label class="radio"><input type="radio" name="ctlmode" value="off"><span><b>Listen only</b> You control resistance yourself, for example with a real cassette.</span></label>
-      <label class="small check"><input type="checkbox" id="autoshift" checked> Auto-shift to keep my cadence in my comfortable range</label>
-      <div class="cadrange small" id="cadrange">Comfortable cadence
-        <input id="cad-low" type="number" min="50" max="110" value="80" aria-label="Lowest comfortable cadence"> to
-        <input id="cad-high" type="number" min="60" max="130" value="100" aria-label="Highest comfortable cadence"> rpm
-        <span>Shifts easier when you drop below the first number and harder when you go above the second.</span>
-      </div>
+      <label class="small check"><input type="checkbox" id="resist-on" checked> Let SpinQuest control my trainer's resistance (untick if you set it yourself, for example with a real cassette)</label>
     </section>
 
     <section class="profile">
@@ -92,11 +84,33 @@
       </details>
     </section>
 
-    <section class="workout-pick">
+    <section class="ridemode">
       <h3>Ride</h3>
-      <select id="workout"></select>
-      <p class="small" id="workout-desc"></p>
-      <canvas id="workout-preview" width="600" height="70"></canvas>
+      <div class="modes">
+        <label class="mode"><input type="radio" name="ridemode" value="free" checked><span><b>Free ride</b>Ride the course at your own pace. Chase the pack, the orbs and segments.</span></label>
+        <label class="mode"><input type="radio" name="ridemode" value="erg"><span><b>ERG mode</b>The trainer holds a steady power for you, whatever your cadence.</span></label>
+        <label class="mode"><input type="radio" name="ridemode" value="workout"><span><b>Workout mode</b>Follow a structured workout. The trainer holds each interval for you.</span></label>
+      </div>
+
+      <div class="modebox" data-for="free">
+        <label class="radio"><input type="radio" name="shiftmode" value="auto" checked><span><b>Auto-shift</b> SpinQuest changes gear to keep your cadence in your range. It changes gears and nothing else, so your power is up to you and the terrain decides how hard it is: on a steep climb you can still end up grinding if you don't push enough watts.</span></label>
+        <label class="radio"><input type="radio" name="shiftmode" value="manual"><span><b>I'll shift</b> With a Zwift Click, the + − buttons or ← →. Nothing shifts for you, even when your cadence leaves your range: choosing the right gear is up to you.</span></label>
+      </div>
+      <div class="modebox" data-for="erg">
+        <label class="small">Hold <input id="erg-watts" type="number" min="30" max="1000" step="5" value="150" aria-label="ERG power in watts"> W
+          <span class="small">During the ride, + − (or the Click, or ← →) change it by 10 W.</span></label>
+      </div>
+      <div class="modebox" data-for="workout">
+        <select id="workout"></select>
+        <p class="small" id="workout-desc"></p>
+        <canvas id="workout-preview" width="600" height="70"></canvas>
+      </div>
+
+      <div class="cadrange small" id="cadrange">Comfortable cadence
+        <input id="cad-low" type="number" min="50" max="110" value="80" aria-label="Lowest comfortable cadence"> to
+        <input id="cad-high" type="number" min="60" max="130" value="100" aria-label="Highest comfortable cadence"> rpm
+        <span id="cad-note"></span>
+      </div>
     </section>
 
     <section class="gfx">
@@ -146,7 +160,7 @@
     </div>
     <div class="gearbox" id="h-gear" hidden>
       <button class="gbtn" id="g-down" title="Easier gear (←)">−</button>
-      <div class="gtxt"><b id="g-num">17</b><small>gear</small><span id="g-info"></span></div>
+      <div class="gtxt"><b id="g-num">17</b><small id="g-label">gear</small><span id="g-info"></span></div>
       <button class="gbtn" id="g-up" title="Harder gear (→)">+</button>
     </div>
     <div class="tags"><span id="h-draft" class="tag" hidden>Drafting</span><span id="h-pause" class="tag warn" hidden>Paused</span></div>

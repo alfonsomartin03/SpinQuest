@@ -71,3 +71,12 @@ export function workoutAt(w, t, ftp) {
   const last = w.steps[w.steps.length - 1];
   return { idx: w.steps.length, step: last, elapsed: last.dur, remaining: 0, pct: last.to, watts: Math.round(last.to * ftp), next: null, done: true };
 }
+
+/**
+ * ERG mode as a workout: one very long step at a steady power, which the rider can raise and lower while riding (the step's
+ * fraction of FTP is edited in place). `erg: true` tells the screens not to draw it as a profile.
+ */
+export function ergWorkout(watts, ftp) {
+  const f = watts / ftp;
+  return { id: 'erg', name: 'ERG mode', desc: 'The trainer holds a steady power.', erg: true, steps: [{ dur: 6 * 3600, from: f, to: f, label: 'ERG' }] };
+}

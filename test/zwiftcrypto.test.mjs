@@ -44,9 +44,10 @@ async function fakeController() {
   return {
     pub,
     reply: Uint8Array.of(...RIDE_ON, ...RESPONSE_START, ...pub),
-    async keys(handshake) {
+    async keys(handshake, recipe = {}) {
       const theirPub = handshake.slice(8);
-      return deriveKeys(pair.privateKey, theirPub, false, pub); // salt: the controller's own key first, then the app's
+      // by default the controller's own key goes first in the salt, then the app's
+      return deriveKeys(pair.privateKey, theirPub, false, pub, recipe);
     },
   };
 }
@@ -61,11 +62,12 @@ test('handshake: the app\'s request has the documented layout and a controller\'
   assert.ok(ZapSession.isReply(dev.reply));
   await app.accept(dev.reply);
   const theirs = await dev.keys(request);
-  // the controller derives with its own key first in the salt; the app must land on the same key
-  assert.equal(toHex(app.key), toHex(theirs.key));
-  assert.equal(toHex(app.iv), toHex(theirs.iv));
-  assert.equal(app.key.length, 32);
-  assert.equal(app.iv.length, 4);
+  // the controller seals a message with its keys; the app must be able to open it
+  const sealed = Uint8Array.of(7, 0, 0, 0, ...(await ccmEncrypt(theirs.key, Uint8Array.of(...theirs.iv, 7, 0, 0, 0), hex('37 08 00 10 01'))));
+  assert.deepEqual([...(await app.decrypt(sealed))], [0x37, 8, 0, 0x10, 1]);
+  assert.match(app.recipe.name, /theirs-first, key-iv, nonce iv\+counter$/, 'the published recipe is found first');
+  assert.equal(theirs.key.length, 32);
+  assert.equal(theirs.iv.length, 4);
 });
 
 test('a Click\'s encrypted button messages decrypt to presses (+ and −), and the plain bytes still read the old way', async () => {
@@ -90,4 +92,21 @@ test('a Click\'s encrypted button messages decrypt to presses (+ and −), and t
   await assert.rejects(() => app.decrypt(tampered), /authentication/);
   // and the unencrypted form the older Click sends is read by the same rules
   assert.deepEqual(parseClickButtons(new DataView(hex('37 08 00 10 01').buffer), {}), ['plus']);
+});
+
+test('if the controller uses a different (plausible) recipe than the published one, the session finds it and sticks with it', async () => {
+  for (const [salt, layout, form] of [['ours-first', 'key-iv', 'iv+counter'], ['theirs-first', 'iv-key', 'iv+counter reversed'], ['none', 'key-iv', 'counter+iv']]) {
+    const app = new ZapSession();
+    const request = await app.start();
+    const dev = await fakeController();
+    await app.accept(dev.reply);
+    // the app derives from its side; the controller from its own: both must give the same pair
+    const { key, iv } = await dev.keys(request, { salt: salt === 'theirs-first' ? 'ours-first' : salt === 'ours-first' ? 'theirs-first' : salt, layout });
+    const counter = Uint8Array.of(0x8d, 0, 0, 0);
+    const nonce = { 'iv+counter': () => Uint8Array.of(...iv, ...counter), 'iv+counter reversed': () => Uint8Array.of(...iv, 0, 0, 0, 0x8d), 'counter+iv': () => Uint8Array.of(...counter, ...iv) }[form]();
+    const sealed = Uint8Array.of(...counter, ...(await ccmEncrypt(key, nonce, hex('37 08 01 10 00'))));
+    const plain = await app.decrypt(sealed);
+    assert.deepEqual(clickButtonsFrom(plain), { plus: false, minus: true }, `${salt} / ${layout} / ${form}`);
+    assert.ok(app.recipe.name.includes(form));
+  }
 });

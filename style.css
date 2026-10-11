@@ -179,11 +179,11 @@ kbd { background: rgba(255, 255, 255, 0.14); border-radius: 5px; padding: 1px 6p
 .btn.ghost { background: transparent; font-weight: 500; font-size: 13px; padding: 6px 10px; }
 .tip { margin: 10px 2px 0; line-height: 1.45; }
 .ctl { margin-top: 12px; }
-.ctl .radio { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.4; cursor: pointer; padding: 6px 4px; }
-.ctl .radio b { display: block; font-size: 14px; }
-.ctl .radio span { color: var(--muted); }
-.ctl .radio input { margin-top: 3px; }
-.ctl .radio:has(input:checked) span b { color: var(--text); }
+.ctl .radio, .modebox .radio { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.4; cursor: pointer; padding: 6px 4px; }
+.ctl .radio b, .modebox .radio b { display: block; font-size: 14px; }
+.ctl .radio span, .modebox .radio span { color: var(--muted); }
+.ctl .radio input, .modebox .radio input { margin-top: 3px; }
+.ctl .radio:has(input:checked) span b, .modebox .radio:has(input:checked) span b { color: var(--text); }
 .ctl.denied { border-color: rgba(245, 197, 66, 0.6); }
 
 .gearbox { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 6px; background: rgba(255, 255, 255, 0.06); border-radius: 12px; pointer-events: auto; }
@@ -308,3 +308,16 @@ kbd { background: rgba(255, 255, 255, 0.14); border-radius: 5px; padding: 1px 6p
 .turn-banner.on { grid-template-columns: 1fr; }
 
 .click-log { margin: 6px 0; padding: 6px 8px; max-height: 9em; overflow: auto; font: 11px/1.35 ui-monospace, Menlo, monospace; color: var(--muted); background: rgba(0, 0, 0, 0.25); border-radius: 8px; white-space: pre-wrap; word-break: break-all; }
+
+/* ---------- ride modes ---------- */
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 10px; }
+.mode { display: block; cursor: pointer; }
+.mode input { position: absolute; opacity: 0; pointer-events: none; }
+.mode span { display: block; height: 100%; padding: 10px 12px; font-size: 12px; line-height: 1.35; color: var(--muted); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 12px; transition: 0.15s; }
+.mode b { display: block; margin-bottom: 3px; font-size: 14px; color: var(--text); }
+.mode input:checked + span { background: rgba(255, 59, 107, 0.16); border-color: var(--accent); color: var(--text); }
+.mode input:focus-visible + span { outline: 2px solid var(--accent2); }
+.modebox { margin: 4px 0 8px; }
+.modebox[hidden] { display: none; }
+.modebox input[type=number] { width: 78px; }
+@media (max-width: 760px) { .modes { grid-template-columns: 1fr; } }

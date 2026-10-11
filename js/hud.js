@@ -80,6 +80,7 @@ export class Hud {
       'c-now', 'c-next', 'c-vam', 'c-eta', 'c-top', 'c-steep', 'c-profile', 'h-turn', 'h-turn-title', 'h-turn-sub', 'h-turn-btn', 'h-turn-hint', 'h-turn-bar']) this.el[id] = $(id);
     this.selectedId = null;
     this.vamBuf = [];
+    this.paceBuf = []; // {t, x}: where you were over the last 30 s of riding, for the time left to the top
     this.spd = 0;
     this.maxRows = 8;
     this.layoutAt = -9;
@@ -169,7 +170,7 @@ export class Hud {
     this.#zone(game);
     if (game.clock - this.graphAt > 0.5) {
       this.graphAt = game.clock;
-      if (game.workout.steps.length) drawWorkoutProfile(e['h-graph'], game.workout, ftp, { playhead: game.wt, samples: game.samples });
+      if (game.workout.steps.length && !game.workout.erg) drawWorkoutProfile(e['h-graph'], game.workout, ftp, { playhead: game.wt, samples: game.samples });
       else drawRecent(e['h-graph'], game);
     }
     void maxHr;
@@ -184,6 +185,20 @@ export class Hud {
       setText(e['h-next'], 'Last 5 minutes of power');
       setText(e['h-remain'], '');
       tg.hidden = true;
+      return;
+    }
+    if (game.workout.erg) { // ERG mode: one steady target, adjustable while riding
+      tg.hidden = !game.target;
+      setText(e['h-step'], 'ERG mode');
+      setText(e['h-next'], 'Hold the target · + − change it by 10 W');
+      setText(e['h-remain'], '');
+      if (game.target) {
+        setText(e['h-twatts'], String(game.target.watts));
+        const d = game.p3 - game.target.watts;
+        tg.classList.toggle('on', Math.abs(d) <= game.target.tol);
+        tg.classList.toggle('low', d < -game.target.tol);
+        tg.classList.toggle('high', d > game.target.tol);
+      }
       return;
     }
     if (!w) {
@@ -328,10 +343,16 @@ export class Hud {
     let act = activeClimb(game.user.c);
     if (act && game.spurIntent && act.climb.start < LOOP_LEN) act = null; // no climb panel once you have chosen to skip it
     e['h-climb'].hidden = !act;
-    if (!act) { this.vamBuf.length = 0; return; }
+    if (!act) { this.vamBuf.length = 0; this.paceBuf.length = 0; return; }
     const { climb, stats: st } = act;
-    // smoothed speed and a 60 s climbing-rate (VAM) window
-    this.spd += (game.user.v - this.spd) * 0.04;
+    // pace over the last 30 s of riding (so a pause or a sprint 5 minutes ago doesn't skew it), and a 60 s climbing-rate (VAM) window
+    const pb = this.paceBuf;
+    if (!pb.length || game.t - pb[pb.length - 1].t >= 0.5) {
+      pb.push({ t: game.t, x: game.user.x });
+      while (pb.length > 2 && game.t - pb[1].t >= 30) pb.shift();
+    }
+    const oldest = pb[0], newest = pb[pb.length - 1];
+    this.spd = newest.t - oldest.t >= 5 ? (newest.x - oldest.x) / (newest.t - oldest.t) : game.user.v; // until there are 5 s of history, now
     const buf = this.vamBuf;
     if (st.state === 'on' && (!buf.length || game.clock - buf[buf.length - 1].t > 0.5)) {
       buf.push({ t: game.clock, alt: st.altNow });
@@ -353,7 +374,7 @@ export class Hud {
     setText(e['c-next'], pct(st.next500));
     e['c-next'].style.color = gradeColorFor(st.next500);
     setText(e['c-vam'], vam ? Math.round(vam).toLocaleString() : '--');
-    setText(e['c-eta'], this.spd > 1.5 && st.state === 'on' ? fmtTime(st.left / this.spd) : '--');
+    setText(e['c-eta'], this.spd > 0.8 && st.state === 'on' ? fmtTime(st.left / this.spd) : '--');
     setText(e['c-top'], `${Math.round(st.summitAlt).toLocaleString()} m`);
     setText(e['c-steep'], st.left > 30 ? `Steepest ahead ${pct(st.steepest.grade)} in ${km(st.steepest.dist)}` : 'Almost there');
     drawClimbProfile(e['c-profile'], climb, st);
@@ -406,7 +427,7 @@ export function showSummary(game, levelBefore, xpBefore) {
   ctx.clearRect(0, 0, w, h);
   const s = sum.samples;
   if (s.length > 1) {
-    if (sum.workout.steps.length) drawWorkoutProfile(canvas, sum.workout, game.profile.ftp, { samples: s });
+    if (sum.workout.steps.length && !sum.workout.erg) drawWorkoutProfile(canvas, sum.workout, game.profile.ftp, { samples: s });
     else {
       const maxP = Math.max(game.profile.ftp * 1.4, ...s.map((x) => x.p));
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath();

@@ -1,120 +1,114 @@
-// Cadence-hold resistance control. The closed-loop tests simulate a rider (a chosen power, with wobble), a flywheel
-// and an ERG-style trainer that takes a second or more to change resistance and reads cadence late and noisily,
-// across light and heavy flywheels and slow and fast trainers.
+// Free-ride resistance and auto-shift. Resistance is the road's own through the current gear (GearResistance); auto-shift
+// only ever changes the gear. The closed-loop tests ride a rider at a steady power: cadence settles where the gear's
+// resistance equals that power, exactly as it would on a real bike.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { VirtualGears, ResistanceControl, ergGuard } from '../js/gearing.js';
+import { VirtualGears, GearResistance, ergGuard, GEAR_RATIOS } from '../js/gearing.js';
 
-const LOW = 80, HIGH = 100, MID = 90;
+const LOW = 80, HIGH = 100;
+const CTX = { grade: 0, mass: 84, drag: 1 };
 
-function simulate({ mode = 'new', effort, disturb = null, secs = 90, J = 5, lag = 1, delay = 0.3, noise = 1, wobble = 12, seed = 5 }) {
-  const gears = new VirtualGears({ auto: false, low: LOW, high: HIGH });
-  const ctl = new ResistanceControl(gears, 250);
-  let s = seed; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
-  const gauss = () => rnd() + rnd() + rnd() - 1.5;
-  let w = (MID * Math.PI) / 30, applied = 150, sent = 150, nextSend = 0, nextRead = 0, meas = MID, wob = 0;
-  const dt = 0.02, hist = [], rows = [];
-  for (let t = 0; t < secs; t += dt) {
-    wob += (-wob / 1.5) * dt + gauss() * wobble * 0.5 * Math.sqrt(dt / 0.3); // the rider's power is never perfectly steady
-    if (disturb && Math.abs(t - disturb.t) < dt / 2) w = (disturb.rpm * Math.PI) / 30;
-    const rpm = (w * 30) / Math.PI;
-    hist.push(rpm);
-    if (t >= nextRead) { nextRead += 0.25; meas = Math.round(hist[Math.max(0, hist.length - 1 - Math.round(delay / dt))] + gauss() * noise); }
-    const ctx = { grade: 0, mass: 84, drag: 1 };
-    const cmd = mode === 'new' ? ctl.update(dt, meas, ctx) : gears.targetPower({ cadence: meas, ...ctx }); // 'old' = the first power-for-cadence target
-    if (t >= nextSend) { nextSend += 0.25; sent = Math.min(2000, cmd); }
-    applied += (sent - applied) * (1 - Math.exp(-dt / lag)); // the trainer holds power, with lag
-    const wr = Math.max(w, 3);
-    w = Math.max(0, w + (((Math.max(0, effort(t) + wob) - applied) / wr - 0.02 * w) / J) * dt);
-    rows.push({ t, rpm: (w * 30) / Math.PI, power: applied });
-  }
-  return rows;
+/** The cadence at which this gear on this road asks for `power` (the resistance rises with cadence, so bisect). */
+function cadenceFor(gears, power, ctx) {
+  let lo = 0, hi = 220;
+  for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (gears.targetPower({ cadence: mid, ...ctx }) > power) hi = mid; else lo = mid; }
+  return lo;
 }
 
-const PLANTS = [[3, 0.8, 0.3], [5, 1.0, 0.3], [8, 1.5, 0.4], [5, 2.0, 0.5], [4, 1.2, 0.6]]; // [inertia, trainer lag (s), cadence delay (s)]
-const after = (rows, t0) => rows.filter((r) => r.t >= t0);
-const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
-const sd = (a) => Math.sqrt(mean(a.map((x) => (x - mean(a)) ** 2)));
-const late = (rows) => after(rows, rows.at(-1).t - 15);
-const ramp = (from, to, t0 = 25, dur = 4) => (t) => { const k = Math.min(1, Math.max(0, (t - t0) / dur)); return from + (to - from) * k * k * (3 - 2 * k); };
-const maxRate = (rows) => { let m = 0; for (let i = 1; i < rows.length; i++) m = Math.max(m, Math.abs(rows[i].power - rows[i - 1].power) / (rows[i].t - rows[i - 1].t)); return m; };
-
-test('steady riding holds the middle of the range with almost no movement in the request', () => {
-  for (const [J, lag, delay] of PLANTS) {
-    const l = late(simulate({ effort: () => 200, J, lag, delay }));
-    assert.ok(Math.abs(mean(l.map((r) => r.rpm)) - MID) < 5, `${mean(l.map((r) => r.rpm)).toFixed(0)} rpm is not the middle of the range`);
-    assert.ok(sd(l.map((r) => r.rpm)) < 4, `cadence wobble ${sd(l.map((r) => r.rpm)).toFixed(1)} rpm`);
-    assert.ok(sd(l.map((r) => r.power)) < 14, `the request wanders by ${sd(l.map((r) => r.power)).toFixed(1)} W`);
+/** Ride at a steady `power` on a constant grade; returns what cadence, gear and request did. */
+function ride({ power, grade = 0, auto = true, secs = 120, gear = 17, low = LOW, high = HIGH }) {
+  const gears = new VirtualGears({ auto, gear, low, high });
+  const res = new GearResistance(gears);
+  const ctx = { grade, mass: 84, drag: 1 };
+  let cad = cadenceFor(gears, power, ctx), shifts = 0;
+  const rows = [];
+  const dt = 0.1;
+  for (let t = 0; t < secs; t += dt) {
+    cad += (cadenceFor(gears, power, ctx) - cad) * (1 - Math.exp(-dt / 1.2)); // the legs follow the gear with a little lag
+    if (gears.update(dt, cad)) shifts++;
+    const want = res.update(dt, cad, ctx);
+    rows.push({ t, cad, gear: gears.gear, want });
   }
+  return { rows, shifts, gears, last: rows.at(-1) };
+}
+
+test('resistance is the road demand through the gear: more watts for a harder gear or a steeper road, almost none downhill', () => {
+  const at = (gear, grade) => {
+    const g = new VirtualGears({ auto: false, gear }); const r = new GearResistance(g);
+    let p = 0; for (let i = 0; i < 100; i++) p = r.update(0.05, 90, { grade, mass: 84, drag: 1 });
+    return { p, expect: g.targetPower({ cadence: 90, grade, mass: 84 }) };
+  };
+  const flat = at(17, 0);
+  assert.ok(Math.abs(flat.p - flat.expect) < 2, `${flat.p.toFixed(0)} W vs ${flat.expect.toFixed(0)} W`);
+  assert.ok(at(19, 0).p > flat.p, 'a harder gear asks for more');
+  assert.ok(at(17, 0.06).p > flat.p * 1.8, 'a climb asks for much more at the same gear and cadence');
+  assert.ok(at(17, -0.05).p < 40, 'a descent asks for almost nothing');
+  assert.ok(at(17, 0.12).p > at(17, 0.06).p, 'and the steeper the more');
 });
 
-test('changes in effort re-centre cadence smoothly, with no repeating swings (the reported 130 <-> 320 W cycle)', () => {
-  for (const [J, lag, delay] of PLANTS) {
-    for (const [from, to] of [[200, 320], [200, 120], [140, 260], [120, 320]]) {
-      const rows = simulate({ effort: ramp(from, to), J, lag, delay });
-      const l = late(rows);
-      const swing = Math.max(...l.map((r) => r.power)) - Math.min(...l.map((r) => r.power));
-      assert.ok(Math.abs(mean(l.map((r) => r.rpm)) - MID) < 6, `${from}>${to}: cadence ended at ${mean(l.map((r) => r.rpm)).toFixed(0)}`);
-      assert.ok(Math.abs(mean(l.map((r) => r.power)) - to) < 14, `${from}>${to}: power ended at ${mean(l.map((r) => r.power)).toFixed(0)} W`);
-      assert.ok(swing < (lag >= 2 && to - from >= 200 ? 100 : 70), // a 200 W jump on a 2 s-lag trainer takes longer to settle
-         `${from}>${to}: still swinging by ${swing.toFixed(0)} W (J${J} lag${lag})`);
-      assert.ok(maxRate(after(rows, 25)) < 130, `the request moves too abruptly: ${maxRate(after(rows, 25)).toFixed(0)} W/s`);
+test('the request is smooth, never negative, never wild, and lets go of a stalling rider', () => {
+  const g = new VirtualGears({ auto: false });
+  const r = new GearResistance(g);
+  let prev = null, worst = 0;
+  for (let i = 0; i < 400; i++) {
+    const p = r.update(0.05, i < 200 ? 90 : 150, { grade: 0.04, mass: 84, drag: 1 });
+    if (prev != null) worst = Math.max(worst, Math.abs(p - prev) / 0.05);
+    prev = p;
+    assert.ok(p >= 0 && p <= 2000);
+  }
+  assert.ok(worst <= 900 + 1e-6, `the request moved at ${worst.toFixed(0)} W/s`);
+  const stall = new GearResistance(g);
+  for (let i = 0; i < 100; i++) stall.update(0.05, 30, { grade: 0.1, mass: 84, drag: 1 });
+  assert.ok(stall.out < new GearResistance(g).update(0.05, 90, { grade: 0.1, mass: 84, drag: 1 }) * 0.6, 'below ~40 rpm it eases off');
+  assert.equal(new GearResistance(g).update(0.05, 0, CTX), 0, 'no cadence, no resistance');
+  assert.ok(Number.isFinite(new GearResistance(g).update(0.05, 400, CTX)), 'finite for absurd cadences');
+});
+
+test('auto-shift finds a gear that puts cadence in the range and then leaves it alone', () => {
+  for (const [power, grade] of [[200, 0], [150, 0], [250, 0.03], [220, 0.05], [300, -0.02]]) {
+    for (const gear of [11, 17, 22]) {
+      const { last, rows, shifts } = ride({ power, grade, gear });
+      assert.ok(last.cad >= LOW - 1.5 && last.cad <= HIGH + 1.5, `${power} W on ${grade * 100}% from gear ${gear}: ended at ${last.cad.toFixed(0)} rpm in gear ${last.gear}`);
+      const late = rows.filter((r) => r.t > 90);
+      assert.ok(new Set(late.map((r) => r.gear)).size === 1, 'no hunting between gears once it has settled');
+      assert.ok(shifts <= 24, `${shifts} shifts`);
     }
   }
 });
 
-test('a stumble in cadence recovers instead of spiralling', () => {
-  for (const [J, lag, delay] of PLANTS) {
-    for (const rpm of [50, 62]) {
-      const rows = simulate({ effort: () => 200, disturb: { t: 25, rpm }, J, lag, delay });
-      assert.ok(Math.min(...after(rows, 25.5).map((r) => r.rpm)) >= rpm - 6, `fell to ${Math.min(...after(rows, 25.5).map((r) => r.rpm)).toFixed(0)} after a stumble to ${rpm}`);
-      assert.ok(Math.abs(mean(late(rows).map((r) => r.rpm)) - MID) < 6, 'recovered to the middle');
-    }
+test('terrain matters: on a climb steep enough, a rider without the watts is left grinding below the range, in the easiest gear', () => {
+  const grind = ride({ power: 130, grade: 0.12 });
+  assert.equal(grind.last.gear, 1, 'it ran out of gears');
+  assert.ok(grind.last.cad < LOW - 5, `cadence ${grind.last.cad.toFixed(0)} rpm: grinding`);
+  const ok = ride({ power: 180, grade: 0.04 });
+  assert.ok(ok.last.cad >= LOW - 1.5, `${ok.last.cad.toFixed(0)} rpm: decent watts on an easier road are fine`);
+  // more watts on the same climb gets the cadence back
+  assert.ok(ride({ power: 330, grade: 0.12 }).last.cad > grind.last.cad + 15);
+});
+
+test('shifting yourself: nothing is shifted for you, even far outside your range', () => {
+  for (const gear of [3, 17, 24]) {
+    const r = ride({ power: 140, grade: 0.09, auto: false, gear });
+    assert.equal(r.shifts, 0);
+    assert.equal(r.last.gear, gear);
   }
+  const g = new VirtualGears({ auto: false });
+  for (let i = 0; i < 300; i++) assert.equal(g.update(0.1, i < 150 ? 40 : 130), 0);
+  assert.equal(g.gear, 17);
+  // and manual shifts do work
+  assert.ok(g.shift(-1) && g.gear === 16 && g.shift(+1, true) && g.gear === 17);
 });
 
-test('the first power-for-cadence target let cadence settle low (grinding); the cadence-hold keeps it centred', () => {
-  const eff = ramp(200, 110);
-  const old = mean(late(simulate({ mode: 'old', effort: eff })).map((r) => r.rpm));
-  const now = mean(late(simulate({ effort: eff })).map((r) => r.rpm));
-  assert.ok(old < LOW - 1, `old behaviour settled at ${old.toFixed(0)} rpm`);
-  assert.ok(Math.abs(now - MID) < 5, `new behaviour settled at ${now.toFixed(0)} rpm`);
-});
-
-test('controller rules: dead zone at the middle, firmer outside the range, virtual inertia on fast changes', () => {
-  const mk = () => new ResistanceControl(new VirtualGears({ auto: false, low: LOW, high: HIGH }), 250);
-  const ctx = { grade: 0, mass: 84, drag: 1 };
-  const run = (ctl, rpm, secs) => { for (let i = 0; i < secs * 50; i++) ctl.update(0.02, rpm, ctx); return ctl.bias; };
-
-  assert.ok(Math.abs(run(mk(), MID, 20)) < 1e-6, 'at the middle nothing changes');
-  assert.ok(Math.abs(run(mk(), MID + 1, 20)) < 1e-6, 'inside the dead zone nothing changes');
-  const up = run(mk(), 96, 10), down = run(mk(), 84, 10);
-  assert.ok(up > 5 && down < -5, `above the middle resistance firms up (${up.toFixed(0)}), below it eases (${down.toFixed(0)})`);
-  assert.ok(run(mk(), 108, 5) > run(mk(), 98, 5) * 1.5, 'the further from the middle (and outside the range), the firmer');
-  assert.ok(Math.abs(run(mk(), 10, 10)) < 1e-6, 'nothing adapts while not really pedalling');
-  assert.ok(mk().update(0.02, 0, ctx) < 1, 'no cadence, no resistance');
-  assert.ok(Number.isFinite(run(mk(), 300, 5)), 'finite for absurd cadences');
-
-  // a cadence that is climbing quickly gets more resistance than one holding still (virtual inertia)
-  const steady = mk(), rising = mk();
-  let a = 0, b = 0;
-  for (let i = 0; i < 100; i++) { a = steady.update(0.02, 90, ctx); b = rising.update(0.02, 90 + i * 0.1, ctx); }
-  assert.ok(b > a, 'faster cadence, more resistance');
-});
-
-test('automatic shifts keep resistance continuous; the request is never negative or wild', () => {
-  const g = new VirtualGears({ auto: false, low: LOW, high: HIGH });
-  const ctl = new ResistanceControl(g, 250);
-  const ctx = { grade: 0.03, mass: 84, drag: 1 };
-  for (let i = 0; i < 200; i++) ctl.update(0.02, MID, ctx);
-  const before = ctl.update(0.02, MID, ctx);
-  const physBefore = ctl.physics(ctx);
-  g.shift(+1, false);
-  ctl.compensate(physBefore, ctl.physics(ctx));
-  for (let i = 0; i < 100; i++) ctl.update(0.02, MID, ctx);
-  const afterShift = ctl.update(0.02, MID, ctx);
-  assert.ok(Math.abs(afterShift - before) < 12, `${before.toFixed(0)} -> ${afterShift.toFixed(0)} W`);
-  for (let rpm = 0; rpm <= 250; rpm += 5) { const p = new ResistanceControl(g, 250).update(0.02, rpm, ctx); assert.ok(p >= 0 && p <= 2200, `${rpm} rpm -> ${p}`); }
+test('auto-shift responds faster when well outside the range, and a custom range is respected', () => {
+  const far = new VirtualGears({ auto: true });
+  let t = 0; while (!far.update(0.1, 55) && t < 10) t += 0.1;
+  assert.ok(t <= 1.5, `shifted easier after ${t.toFixed(1)} s from 55 rpm`);
+  const near = new VirtualGears({ auto: true });
+  t = 0; while (!near.update(0.1, 77) && t < 10) t += 0.1;
+  assert.ok(t >= 1.9 && t <= 3, `shifted easier after ${t.toFixed(1)} s from 77 rpm`);
+  const narrow = ride({ power: 200, grade: 0, low: 90, high: 100 });
+  assert.ok(narrow.last.cad >= 88.5 && narrow.last.cad <= 101.5, `${narrow.last.cad.toFixed(0)} rpm in a 90-100 range`);
+  assert.ok(GEAR_RATIOS.length === 24);
 });
 
 test('ERG guard eases the target when grinding below the range only', () => {
@@ -123,10 +117,4 @@ test('ERG guard eases the target when grinding below the range only', () => {
   assert.ok(ergGuard(250, 60, LOW) < 150 && ergGuard(250, 60, LOW) > 100);
   assert.ok(ergGuard(250, 30, LOW) < 60);
   assert.equal(ergGuard(250, 0, LOW), 250, 'not pedalling: leave it to the pause logic');
-});
-
-test('terrain never changes the resistance request', () => {
-  const run = (grade) => { const c = new ResistanceControl(new VirtualGears({ auto: false, low: LOW, high: HIGH }), 250); let p = 0; for (let i = 0; i < 500; i++) p = c.update(0.02, MID, { grade, mass: 84, drag: 0.6 }); return p; };
-  assert.equal(run(0), run(0.12));
-  assert.equal(run(0), run(-0.08));
 });
