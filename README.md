@@ -103,6 +103,10 @@ node --test test/*.test.mjs
 
 Covers the Bluetooth packet parsers, physics, course, workouts and the game rules.
 
+## License
+
+SpinQuest is released under the [MIT License](LICENSE). It bundles [Three.js](https://threejs.org) (also MIT) in `vendor/three/`, with its own licence file alongside. "Zwift" and "Strava" are trademarks of their owners; SpinQuest is not affiliated with or endorsed by either.
+
 ## Layout
 
 ```
