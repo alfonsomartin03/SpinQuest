@@ -72,6 +72,33 @@ const box = (w, h, d, x, y, z, color) => {
   return g;
 };
 
+// Where a detour leaves or rejoins the loop the two roads overlap for a while, and the loop's surface is drawn over the detour's.
+// Anything that stands beside the road (neon rails, posts, boards) is held back until the roads have parted, or it would
+// cut across the other road's lanes.
+const JOIN = 400; // how far from the fork or rejoin the roads can still overlap
+const _fa = {}, _fb = {};
+const wrapLoop = (d) => ((d % LOOP) + LOOP) % LOOP;
+/** True when the road at course distance d is at least `sep` metres (centreline to centreline) from the road it merges with. */
+function parted(d, sep) {
+  for (const sp of SPURS) {
+    let other = null;
+    if (d < LOOP) {
+      if (d >= sp.fork && d < sp.fork + JOIN) other = sp.base + (d - sp.fork);
+      else if (d > sp.rejoin - JOIN && d <= sp.rejoin) other = sp.end - (sp.rejoin - d);
+    } else if (d >= sp.base && d <= sp.end) {
+      if (d - sp.base < JOIN) other = sp.fork + (d - sp.base);
+      else if (sp.end - d < JOIN) other = sp.rejoin - (sp.end - d);
+    }
+    if (other == null) continue;
+    frame(d, _fa);
+    frame(other < LOOP ? wrapLoop(other) : other, _fb);
+    if (Math.hypot(_fa.x - _fb.x, _fa.z - _fb.z) < sep) return false;
+  }
+  return true;
+}
+
+const LOOP_TILE = LOOP / Math.round(LOOP / 12); // a whole number of lane-marking tiles round the loop, so the dashes run unbroken over the start line
+
 export function buildRoad({ anisotropy = 8 } = {}) {
   const group = new THREE.Group();
   group.name = 'road';
@@ -79,12 +106,12 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   // surface
   const { map, bump } = makeAsphalt(anisotropy);
   const mat = new THREE.MeshStandardMaterial({
-    map, bumpMap: bump, bumpScale: 1.2, roughness: 0.92, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    map, bumpMap: bump, bumpScale: 0.6, roughness: 0.5, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
   // the deck of the covered bridge replaces the road between its abutments
   const pieces = [[0, BRIDGE.x - BRIDGE.half], [BRIDGE.x + BRIDGE.half, LOOP - 1e-3]];
   for (const [a, b] of pieces) {
-    const m = new THREE.Mesh(ribbon(a, b, { y: 0.02 }), mat);
+    const m = new THREE.Mesh(ribbon(a, b, { y: 0.02, uvAlong: LOOP_TILE }), mat);
     m.receiveShadow = true;
     group.add(m);
   }
@@ -93,12 +120,41 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   const spurMat = mat.clone();
   spurMat.polygonOffsetFactor = spurMat.polygonOffsetUnits = -1;
   for (const sp of SPURS) {
-    const spur = new THREE.Mesh(ribbon(sp.base, sp.end, { y: 0.02 }), spurMat);
+    const spur = new THREE.Mesh(ribbon(sp.base, sp.end, { y: 0.008 }), spurMat); // a hair lower than the loop, so the two never z-fight where they overlap
     spur.receiveShadow = true;
     group.add(spur);
   }
   // every stretch of road that gets posts and chevrons: the loop, then each detour
   const spans = [[0, LOOP], ...SPURS.map((sp) => [sp.base, sp.end])];
+
+  // glowing neon edge rails: arena blue down the left of the road, orange down the right, so the course reads like a track
+  const railPieces = (from, to) => {
+    const cuts = [[TUNNEL.start - 6, TUNNEL.end + 6], [BRIDGE.x - BRIDGE.half - 2, BRIDGE.x + BRIDGE.half + 2]].filter(([a, b]) => b > from && a < to).sort((p, q) => p[0] - q[0]);
+    const out = [];
+    let at = from;
+    for (const [a, b] of cuts) { if (a > at) out.push([at, a]); at = Math.max(at, b); }
+    if (at < to) out.push([at, to]);
+    return out;
+  };
+  const rails = [[-4.78, -4.62, '#18b4ff'], [4.62, 4.78, '#ff7a18']];
+  for (const [l0, l1, hex] of rails) {
+    const railMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(2.4), toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    const geos = [];
+    for (const [from, to] of [[0, LOOP - 1e-3], ...SPURS.map((sp) => [sp.base, sp.end])]) { // frame(LOOP) is the start of the first detour, so stop just short of it
+      for (const [a, b] of railPieces(from, to)) {
+        if (a < LOOP) { if (b - a > 1) geos.push(ribbon(a, b, { l0, l1, y: 0.045, step: 3 })); continue; }
+        // a detour's rails start where it has left the loop's road and end where it comes back to it
+        let start = null;
+        for (let d = a; d <= b + 1e-6; d += 3) {
+          const ok = d <= b && parted(d, 11.6);
+          if (ok && start == null) start = d;
+          if (!ok && start != null) { if (d - 3 - start > 6) geos.push(ribbon(start, d - 3, { l0, l1, y: 0.045, step: 3 })); start = null; }
+        }
+        if (start != null && b - start > 6) geos.push(ribbon(start, b, { l0, l1, y: 0.045, step: 3 }));
+      }
+    }
+    group.add(new THREE.Mesh(mergeGeometries(geos), railMat));
+  }
 
   // painted segment bands along both shoulders
   for (const s of SEGMENTS) {
@@ -119,6 +175,7 @@ export function buildRoad({ anisotropy = 8 } = {}) {
     const inTunnel = d > TUNNEL.start - 12 && d < TUNNEL.end + 12;
     const onBridge = Math.abs(d - BRIDGE.x) < 20;
     if (inTunnel || onBridge) continue;
+    if (!parted(d, 14)) continue;
     const alpine = (d > 3600 && d < 5400) || (d >= LOOP && elevation(d) > 1450); // snow poles on the pass and the top of Death Road
     for (const side of [-1, 1]) {
       if (alpine) poles.push(roadMatrix(d, side * 6.5, 0));
@@ -138,7 +195,7 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   stickGeo.translate(0, 0.85, 0);
   const boards = [], sticks = [];
   for (const [from, to] of spans) for (let d = from + 20; d < to; d += 13) {
-    if ((d > TUNNEL.start - 40 && d < TUNNEL.end + 40) || Math.abs(d - BRIDGE.x) < 40) continue;
+    if ((d > TUNNEL.start - 40 && d < TUNNEL.end + 40) || Math.abs(d - BRIDGE.x) < 40 || !parted(d, 16)) continue;
     const k = curvatureAt(d);
     if (Math.abs(k) < 0.0042) continue;
     const outside = k > 0 ? 1 : -1; // left bend (k>0): outside is on the right

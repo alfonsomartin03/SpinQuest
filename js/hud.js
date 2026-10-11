@@ -225,7 +225,9 @@ export class Hud {
     this.layoutAt = clock;
     const bottom = document.querySelector('#hud .bottom');
     if (!bottom) return;
-    const mapH = this.el['h-mapbox'].offsetHeight || 0;
+    const box = this.el['h-mapbox'];
+    if (box.offsetHeight) this.mapH = box.offsetHeight; // keep the last height while the rider card is standing in for the map
+    const mapH = this.mapH || 0;
     const avail = bottom.getBoundingClientRect().top - 14 - 10 - mapH - 60 - 10;
     this.maxRows = clamp(Math.floor(avail / 30), 3, 10);
   }

@@ -65,11 +65,11 @@ const merge = (parts) => {
 function makePine(snowy) {
   const parts = [];
   parts.push(paint(xf(new THREE.CylinderGeometry(0.22, 0.34, 3.2, 6), { y: 1.6 }), C('#3d2a1b'), C('#5a3d26')));
-  const dark = snowy ? C('#2a5a42') : C('#1d4a2c');
+  const dark = snowy ? C('#1b7a63') : C('#0c6e3c');
   for (let i = 0; i < 5; i++) {
     const r = 3.1 * (1 - i * 0.17), h = 3.5 - i * 0.2;
     const cone = xf(new THREE.ConeGeometry(r, h, 8, 1), { y: 2.6 + i * 2.15 + h / 2, ry: i * 0.6 });
-    const top = snowy ? C('#f4f8fc') : mixC(C('#3f7a45'), C('#5a9a50'), i / 5);
+    const top = snowy ? C('#f4f8fc') : mixC(C('#1a9a4c'), C('#52dc6c'), i / 5);
     parts.push(paint(cone, dark, top, (i % 2 ? 0.05 : -0.04)));
   }
   return merge(parts);
@@ -81,7 +81,7 @@ function makeBroadleaf(fruit) {
   const blobs = [[0, 6.4, 0, 3.0], [-1.9, 5.2, 0.6, 2.1], [1.9, 5.4, -0.4, 2.2], [0.3, 7.6, 0.4, 2.0], [0.2, 4.9, 1.9, 1.8]];
   blobs.forEach(([x, y, z, r], i) => {
     const b = xf(blob(r, 1, 0.22, i * 3.1), { x, y, z });
-    parts.push(paint(b, C('#2d6a36'), C('#86b84f'), (i % 2 ? 0.06 : -0.03)));
+    parts.push(paint(b, C('#16a043'), C('#92e84e'), (i % 2 ? 0.06 : -0.03)));
   });
   if (fruit) {
     for (let i = 0; i < 12; i++) {
@@ -109,7 +109,7 @@ function makeBirch() {
   trunk.deleteAttribute('uv');
   parts.push(trunk.toNonIndexed());
   [[0, 6.4, 0, 1.9], [-1.0, 5.4, 0.5, 1.3], [1.1, 5.7, -0.3, 1.4]].forEach(([x, y, z, r], i) => {
-    parts.push(paint(xf(blob(r, 1, 0.2, i * 5), { x, y, z }), C('#7fae52'), C('#c0dc78'), 0.02));
+    parts.push(paint(xf(blob(r, 1, 0.2, i * 5), { x, y, z }), C('#5fd84a'), C('#d8f46a'), 0.02));
   });
   return merge(parts);
 }
@@ -117,7 +117,7 @@ function makeBirch() {
 function makeBush() {
   const parts = [];
   [[0, 0.7, 0, 1.0], [-0.9, 0.55, 0.3, 0.75], [0.8, 0.6, -0.2, 0.8]].forEach(([x, y, z, r], i) => {
-    parts.push(paint(xf(blob(r, 1, 0.2, i * 7 + 2), { x, y, z }), C('#2c5f31'), C('#6aa34c')));
+    parts.push(paint(xf(blob(r, 1, 0.2, i * 7 + 2), { x, y, z }), C('#14903c'), C('#5ae04c')));
   });
   return merge(parts);
 }
@@ -158,8 +158,8 @@ function makeLamp() {
   return merge(parts);
 }
 
-const HOUSE_WALLS = ['#eadfc4', '#e6c3a8', '#c9d6e6', '#f1e9cf', '#d7c4aa', '#e9b8a0', '#bccbb2'];
-const ROOFS = ['#9a4a3a', '#7c3f33', '#4f5560', '#8b5a3a', '#a85a40'];
+const HOUSE_WALLS = ['#ffeab8', '#ffb690', '#a4d4ff', '#fff4cc', '#ffd08c', '#ff9fa0', '#a8ecbc'];
+const ROOFS = ['#e8452f', '#c83a34', '#2f6fe8', '#e8801f', '#d94a52'];
 
 /** A village house, built on the origin with its door facing +x (toward the road when rotated). */
 function makeHouse(seed) {

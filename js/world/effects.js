@@ -214,9 +214,13 @@ export const FinalShader = {
       col /= float(N);
       // vignette
       float vig = smoothstep(0.95, 0.28, r);
-      col *= mix(0.62, 1.0, vig) * mix(1.0, 0.55, uTunnel * smoothstep(0.2, 0.9, r));
+      col *= mix(0.72, 1.0, vig) * mix(1.0, 0.55, uTunnel * smoothstep(0.2, 0.9, r));
       // heart-rate glow pulsing with each beat
       col += uHrColor * uHrAmt * (0.12 + 0.55 * uPulse) * smoothstep(0.32, 0.95, r);
+      // arena grade: richer colour and a touch more contrast, so the world pops like a stadium broadcast
+      float luma = dot(col, vec3(0.299, 0.587, 0.114));
+      col = mix(vec3(luma), col, 1.32);
+      col = pow(max(col, vec3(0.0)), vec3(1.06));
       // golden-hour grade
       col *= mix(vec3(1.0), vec3(1.06, 0.97, 0.86), uGold);
       col += vec3(0.04, 0.03, 0.0) * uGold * smoothstep(0.1, 0.0, abs(vUv.y - 0.5));

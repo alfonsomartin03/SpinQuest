@@ -548,7 +548,8 @@ $('btn-finish').addEventListener('click', endRide);
 $('s-again').addEventListener('click', toMenu);
 $('btn-mute').addEventListener('click', () => {
   setMuted(!isMuted());
-  $('btn-mute').textContent = isMuted() ? '🔇' : '🔊';
+  $('btn-mute').classList.toggle('muted', isMuted());
+  $('btn-mute').setAttribute('aria-pressed', String(isMuted()));
 });
 addEventListener('beforeunload', () => { saveProgress(); links.trainer?.control?.release(); });
 

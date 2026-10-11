@@ -10,22 +10,22 @@ import { makeNoise, smoothstep as sm, lerp } from './noise.js';
 // ---- zone styling (sRGB, linearised below) -------------------------------------------------
 
 const ZONE_STYLE = [
-  { relief: 0.45, ground: '#6aa84a' }, // meadow
-  { relief: 0.85, ground: '#3d6e3a' }, // forest
-  { relief: 2.0, ground: '#7f8a72' }, // alpine
-  { relief: 1.15, ground: '#6fa04a' }, // descent
-  { relief: 0.7, ground: '#5f9a48' }, // lake
-  { relief: 0.25, ground: '#7aa356' }, // village
-  { relief: 0.22, ground: '#c4a653' }, // fields
-  { relief: 0.18, ground: '#a3b05a' }, // valley road
-  { relief: 2.6, ground: '#70785c' }, // death road
+  { relief: 0.45, ground: '#46c43a' }, // meadow
+  { relief: 0.85, ground: '#1f9a48' }, // forest
+  { relief: 2.0, ground: '#8fa38f' }, // alpine
+  { relief: 1.15, ground: '#5ccc3c' }, // descent
+  { relief: 0.7, ground: '#2fc468' }, // lake
+  { relief: 0.25, ground: '#6ed44e' }, // village
+  { relief: 0.22, ground: '#f0c030' }, // fields
+  { relief: 0.18, ground: '#b0dc38' }, // valley road
+  { relief: 2.6, ground: '#7f9a78' }, // death road
 ].map((z) => ({ relief: z.relief, ground: new THREE.Color(z.ground).toArray() }));
 
-const ROCK = new THREE.Color('#77726a').toArray();
-const DARK_ROCK = new THREE.Color('#4a4743').toArray();
+const ROCK = new THREE.Color('#8b8a95').toArray();
+const DARK_ROCK = new THREE.Color('#4d4a5e').toArray();
 const SNOW = new THREE.Color('#f3f6fb').toArray();
-const SAND = new THREE.Color('#cdb98a').toArray();
-const BED = new THREE.Color('#4d6a60').toArray();
+const SAND = new THREE.Color('#f0d894').toArray();
+const BED = new THREE.Color('#2f7a86').toArray();
 const GRAVEL = new THREE.Color('#8b887f').toArray();
 const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 

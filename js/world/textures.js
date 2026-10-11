@@ -36,14 +36,14 @@ export function makeAsphalt(aniso) {
   const px = W / 11.6; // pixels per metre across
   const [c, ctx] = canvas(W, H);
   const rand = mulberry32(5);
-  ctx.fillStyle = '#34363b';
+  ctx.fillStyle = '#2c303a';
   ctx.fillRect(0, 0, W, H);
   // shoulders are a touch lighter and coarser
-  ctx.fillStyle = '#44464a';
+  ctx.fillStyle = '#3a4150';
   ctx.fillRect(0, 0, (5.8 - 4.55) * px, H);
   ctx.fillRect((5.8 + 4.55) * px, 0, (5.8 - 4.55) * px, H);
-  speckle(ctx, W, H, 90000, rand, 20, 95, 0.55);
-  speckle(ctx, W, H, 24000, rand, 90, 150, 0.4);
+  speckle(ctx, W, H, 60000, rand, 25, 80, 0.4);
+  speckle(ctx, W, H, 12000, rand, 90, 150, 0.3);
   // polished wheel tracks
   for (const lat of [-3.1, -1.5, 1.5, 3.1]) {
     const g = ctx.createLinearGradient((lat + 5.8) * px - 0.5 * px, 0, (lat + 5.8) * px + 0.5 * px, 0);
@@ -89,7 +89,7 @@ export function makeAsphalt(aniso) {
   ctx.globalCompositeOperation = 'source-over';
   // destination-out also erased the asphalt under the paint; repaint the base underneath
   const [c2, ctx2] = canvas(W, H);
-  ctx2.fillStyle = '#34363b'; ctx2.fillRect(0, 0, W, H);
+  ctx2.fillStyle = '#2c303a'; ctx2.fillRect(0, 0, W, H);
   ctx2.drawImage(c, 0, 0);
   speckle(ctx2, W, H, 30000, rand, 20, 100, 0.35);
 
