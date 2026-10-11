@@ -1,11 +1,12 @@
-// The road: a textured ribbon along the course, painted segment bands, reflector posts, snow poles
-// and chevron boards on the sharp bends.
+// The road: a cartoon-bright ribbon along the course (built in short chunks so only what is near is drawn), neon edge rails,
+// red and white kerbs on the bends, glowing boost pads, painted segment bands, reflector posts and chevron boards.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LOOP, SPURS, SEGMENTS, TUNNEL, BRIDGE, curvatureAt, elevation } from '../course.js';
 import { frame } from './geo.js';
-import { makeAsphalt, makeChevron } from './textures.js';
+import { makeAsphalt, makeChevron, makeKerb } from './textures.js';
+import { toon } from './toon.js';
 
 export const ROAD_HALF = 4.5; // drivable half width (m)
 export const SHOULDER = 5.8; // half width of the textured strip
@@ -53,13 +54,29 @@ export function roadMatrix(d, lat, up, { yaw = 0, scale = 1 } = {}) {
   return m;
 }
 
-function instanced(geometry, material, matrices) {
-  const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
-  matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.castShadow = true;
-  mesh.frustumCulled = false;
-  return mesh;
+const CHUNK = 400; // metres of road per mesh
+
+/** Split [from, to] into pieces of at most `size` metres. */
+function pieces(from, to, size = CHUNK) {
+  const out = [];
+  for (let a = from; a < to - 1e-6; a += size) out.push([a, Math.min(a + size, to)]);
+  return out;
+}
+
+/** Instanced meshes in groups of `per` neighbours, so each group has a small bounding sphere and distant ones are skipped. */
+function instancedChunks(geometry, material, matrices, { per = 40, shadow = false, far = 600 } = {}) {
+  const g = new THREE.Group();
+  for (let i = 0; i < matrices.length; i += per) {
+    const part = matrices.slice(i, i + per);
+    const mesh = new THREE.InstancedMesh(geometry, material, part.length);
+    part.forEach((m, k) => mesh.setMatrixAt(k, m));
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.castShadow = shadow;
+    mesh.computeBoundingSphere();
+    mesh.userData.far = far;
+    g.add(mesh);
+  }
+  return g;
 }
 
 const box = (w, h, d, x, y, z, color) => {
@@ -99,33 +116,94 @@ function parted(d, sep) {
 
 const LOOP_TILE = LOOP / Math.round(LOOP / 12); // a whole number of lane-marking tiles round the loop, so the dashes run unbroken over the start line
 
+/** Paint a geometry one flat (possibly over-bright) colour with a vertex colour attribute. */
+function colored(geo, hex, k = 1) {
+  const c = new THREE.Color(hex).multiplyScalar(k);
+  const col = new Float32Array(geo.attributes.position.count * 3);
+  for (let i = 0; i < col.length; i += 3) { col[i] = c.r; col[i + 1] = c.g; col[i + 2] = c.b; }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.deleteAttribute('uv');
+  return geo;
+}
+
+/** Ranges of course distance in [from, to] where the road bends harder than `k` (1/m), padded a little. */
+function bendRanges(from, to, k = 0.003, pad = 14) {
+  const out = [];
+  let start = null;
+  for (let d = from; d <= to; d += 4) {
+    const bend = Math.abs(curvatureAt(Math.min(d, to - 1e-3))) > k;
+    if (bend && start == null) start = d;
+    if (!bend && start != null) { out.push([Math.max(from, start - pad), Math.min(to, d + pad)]); start = null; }
+  }
+  if (start != null) out.push([Math.max(from, start - pad), to]);
+  // merge ranges that nearly touch
+  const merged = [];
+  for (const r of out) { const l = merged[merged.length - 1]; if (l && r[0] - l[1] < 30) l[1] = r[1]; else merged.push([...r]); }
+  return merged.filter(([a, b]) => b - a > 10);
+}
+
+/** A glowing, animated chevron panel on the tarmac, like a boost pad. */
+function boostPadMaterial(color, uTime) {
+  return new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime, uColor: { value: new THREE.Color(color) } }]),
+    vertexShader: /* glsl */`
+      #include <common>
+      #include <fog_pars_vertex>
+      varying vec2 vP;
+      void main() {
+        vP = position.xz / vec2(3.5, 1.3);
+        vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: /* glsl */`
+      #include <common>
+      #include <fog_pars_fragment>
+      uniform float uTime; uniform vec3 uColor;
+      varying vec2 vP;
+      void main() {
+        float along = vP.x * 0.5 + 0.5;
+        float lat = abs(vP.y);
+        float c = fract(along * 2.0 - uTime * 1.1 + lat * 0.9);
+        float arrow = smoothstep(0.5, 0.55, c) * (1.0 - smoothstep(0.78, 0.83, c)) * step(lat, 0.9) * step(abs(vP.x), 0.9);
+        float frame = smoothstep(0.82, 0.95, max(abs(vP.x), lat));
+        float shape = max(arrow, frame * 0.9);
+        gl_FragColor = vec4(uColor * (0.8 + 3.4 * shape), clamp(0.45 + 0.55 * shape, 0.0, 1.0));
+        #include <fog_fragment>
+      }`,
+    transparent: true, depthWrite: false, fog: true, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
+  });
+}
+
 export function buildRoad({ anisotropy = 8 } = {}) {
   const group = new THREE.Group();
   group.name = 'road';
+  const uTime = { value: 0 };
+  group.userData.uTime = uTime;
 
   // surface
-  const { map, bump } = makeAsphalt(anisotropy);
-  const mat = new THREE.MeshStandardMaterial({
-    map, bumpMap: bump, bumpScale: 0.6, roughness: 0.5, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-  });
+  const { map } = makeAsphalt(anisotropy);
+  const mat = toon({ map, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   // the deck of the covered bridge replaces the road between its abutments
-  const pieces = [[0, BRIDGE.x - BRIDGE.half], [BRIDGE.x + BRIDGE.half, LOOP - 1e-3]];
-  for (const [a, b] of pieces) {
+  const loopPieces = [[0, BRIDGE.x - BRIDGE.half], [BRIDGE.x + BRIDGE.half, LOOP - 1e-3]];
+  for (const [from, to] of loopPieces) for (const [a, b] of pieces(from, to)) {
     const m = new THREE.Mesh(ribbon(a, b, { y: 0.02, uvAlong: LOOP_TILE }), mat);
     m.receiveShadow = true;
+    m.userData.far = 3000;
     group.add(m);
   }
   // the detours: where one shares the road with the loop at its fork or rejoin, the loop's surface wins, so there is one set
   // of lane markings there and the detour's emerges from underneath as the roads part
-  const spurMat = mat.clone();
-  spurMat.polygonOffsetFactor = spurMat.polygonOffsetUnits = -1;
-  for (const sp of SPURS) {
-    const spur = new THREE.Mesh(ribbon(sp.base, sp.end, { y: 0.008 }), spurMat); // a hair lower than the loop, so the two never z-fight where they overlap
+  const spurMat = toon({ map, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  for (const sp of SPURS) for (const [a, b] of pieces(sp.base, sp.end)) {
+    const spur = new THREE.Mesh(ribbon(a, b, { y: 0.008 }), spurMat); // a hair lower than the loop, so the two never z-fight where they overlap
     spur.receiveShadow = true;
+    spur.userData.far = 3000;
     group.add(spur);
   }
   // every stretch of road that gets posts and chevrons: the loop, then each detour
   const spans = [[0, LOOP], ...SPURS.map((sp) => [sp.base, sp.end])];
+  const roadSpans = [[0, LOOP - 1e-3], ...SPURS.map((sp) => [sp.base, sp.end])]; // frame(LOOP) is the start of the first detour, so stop just short of it
 
   // glowing neon edge rails: arena blue down the left of the road, orange down the right, so the course reads like a track
   const railPieces = (from, to) => {
@@ -136,40 +214,73 @@ export function buildRoad({ anisotropy = 8 } = {}) {
     if (at < to) out.push([at, to]);
     return out;
   };
-  const rails = [[-4.78, -4.62, '#18b4ff'], [4.62, 4.78, '#ff7a18']];
-  for (const [l0, l1, hex] of rails) {
-    const railMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(2.4), toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-    const geos = [];
-    for (const [from, to] of [[0, LOOP - 1e-3], ...SPURS.map((sp) => [sp.base, sp.end])]) { // frame(LOOP) is the start of the first detour, so stop just short of it
-      for (const [a, b] of railPieces(from, to)) {
-        if (a < LOOP) { if (b - a > 1) geos.push(ribbon(a, b, { l0, l1, y: 0.045, step: 3 })); continue; }
-        // a detour's rails start where it has left the loop's road and end where it comes back to it
-        let start = null;
-        for (let d = a; d <= b + 1e-6; d += 3) {
-          const ok = d <= b && parted(d, 11.6);
-          if (ok && start == null) start = d;
-          if (!ok && start != null) { if (d - 3 - start > 6) geos.push(ribbon(start, d - 3, { l0, l1, y: 0.045, step: 3 })); start = null; }
-        }
-        if (start != null && b - start > 6) geos.push(ribbon(start, b, { l0, l1, y: 0.045, step: 3 }));
+  // the stretches of road that get rails: the loop except the tunnel and bridge, and each detour from where it has left the loop's road
+  const railRuns = [];
+  for (const [from, to] of roadSpans) {
+    for (const [a, b] of railPieces(from, to)) {
+      if (a < LOOP) { if (b - a > 1) railRuns.push([a, b]); continue; }
+      let start = null;
+      for (let d = a; d <= b + 1e-6; d += 3) {
+        const ok = d <= b && parted(d, 11.6);
+        if (ok && start == null) start = d;
+        if (!ok && start != null) { if (d - 3 - start > 6) railRuns.push([start, d - 3]); start = null; }
       }
+      if (start != null && b - start > 6) railRuns.push([start, b]);
     }
-    group.add(new THREE.Mesh(mergeGeometries(geos), railMat));
+  }
+  const railMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+  for (const [from, to] of railRuns) for (const [a, b] of pieces(from, to, 600)) {
+    const left = colored(ribbon(a, b, { l0: -4.78, l1: -4.62, y: 0.045, step: 4 }), '#18b4ff', 3.4);
+    const right = colored(ribbon(a, b, { l0: 4.62, l1: 4.78, y: 0.045, step: 4 }), '#ff7a18', 3.4);
+    const rm = new THREE.Mesh(mergeGeometries([left, right]), railMat);
+    rm.userData.far = 1100;
+    group.add(rm);
+  }
+
+  // red and white kerbs on the bends, just outside the rails
+  const kerbMat = toon({ map: makeKerb(), polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+  for (const [from, to] of roadSpans) for (const [a0, b0] of bendRanges(from, to)) {
+    for (const [a, b] of railPieces(a0, b0)) {
+      if (b - a < 8 || (a >= LOOP && !(parted(a, 14) && parted(b, 14)))) continue;
+      const left = ribbon(a, b, { l0: -5.55, l1: -4.88, y: 0.034, step: 2, uvAlong: 3.6 });
+      const right = ribbon(a, b, { l0: 4.88, l1: 5.55, y: 0.034, step: 2, uvAlong: 3.6 });
+      const km = new THREE.Mesh(mergeGeometries([left, right]), kerbMat);
+      km.userData.far = 900;
+      group.add(km);
+    }
+  }
+
+  // boost pads: a pair of glowing panels, one in each lane, every few hundred metres of open road
+  const padGeo = new THREE.PlaneGeometry(7, 2.6);
+  padGeo.rotateX(-Math.PI / 2);
+  const pads = { left: [], right: [] };
+  const clearOfForks = (d) => SPURS.every((sp) => Math.abs(d - sp.fork) > 220 && Math.abs(d - sp.rejoin) > 220);
+  for (let d = 340, n = 0; d < LOOP - 120; d += 420, n++) {
+    if (d > TUNNEL.start - 60 && d < TUNNEL.end + 60) continue;
+    if (Math.abs(d - BRIDGE.x) < 80 || !clearOfForks(d)) continue;
+    pads[n % 2 ? 'left' : 'right'].push(roadMatrix(d, n % 2 ? -2.3 : 2.3, 0.05));
+  }
+  for (const [side, color] of [['left', '#18c8ff'], ['right', '#ff8a1a']]) {
+    if (!pads[side].length) continue;
+    const g = instancedChunks(padGeo, boostPadMaterial(color, uTime), pads[side], { per: 8, far: 800 });
+    group.add(g);
   }
 
   // painted segment bands along both shoulders
   for (const s of SEGMENTS) {
     const col = new THREE.Color(s.color);
-    const bandMat = new THREE.MeshBasicMaterial({ color: col, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, transparent: true, opacity: 0.75 });
-    for (const [l0, l1] of [[-5.5, -5.05], [5.05, 5.5]]) {
-      const m = new THREE.Mesh(ribbon(s.start, s.end, { l0, l1, y: 0.04, step: 3 }), bandMat);
-      group.add(m);
+    const bandMat = new THREE.MeshBasicMaterial({ color: col, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, transparent: true, opacity: 0.8 });
+    for (const [l0, l1] of [[-5.5, -5.05], [5.05, 5.5]]) for (const [a, b] of pieces(s.start, s.end, 500)) {
+      const bm = new THREE.Mesh(ribbon(a, b, { l0, l1, y: 0.04, step: 3 }), bandMat);
+      bm.userData.far = 1500;
+      group.add(bm);
     }
   }
 
   // reflector posts every 24 m (skip the tunnel and bridge)
-  const postGeo = mergeGeometries([box(0.1, 0.95, 0.1, 0, 0.475, 0, '#f2f2f0'), box(0.105, 0.16, 0.105, 0, 0.62, 0, '#d8322d')]);
-  const postMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
-  const polesGeo = mergeGeometries([box(0.09, 2.3, 0.09, 0, 1.15, 0, '#f4f4f2'), box(0.095, 0.5, 0.095, 0, 2.05, 0, '#d8322d'), box(0.1, 0.12, 0.1, 0, 1.35, 0, '#d8322d')]);
+  const postGeo = mergeGeometries([box(0.12, 0.95, 0.12, 0, 0.475, 0, '#ffffff'), box(0.125, 0.18, 0.125, 0, 0.62, 0, '#ff3b30')]);
+  const postMat = toon({ vertexColors: true });
+  const polesGeo = mergeGeometries([box(0.1, 2.3, 0.1, 0, 1.15, 0, '#ffffff'), box(0.105, 0.5, 0.105, 0, 2.05, 0, '#ff3b30'), box(0.11, 0.12, 0.11, 0, 1.35, 0, '#ff3b30')]);
   const posts = [], poles = [];
   for (const [from, to] of spans) for (let d = from + 12; d < to; d += 24) {
     const inTunnel = d > TUNNEL.start - 12 && d < TUNNEL.end + 12;
@@ -182,30 +293,37 @@ export function buildRoad({ anisotropy = 8 } = {}) {
       else posts.push(roadMatrix(d, side * 6.2, 0));
     }
   }
-  group.add(instanced(postGeo, postMat, posts));
-  group.add(instanced(polesGeo, postMat, poles));
+  group.add(instancedChunks(postGeo, postMat, posts, { per: 36, far: 550 }));
+  group.add(instancedChunks(polesGeo, postMat, poles, { per: 36, far: 550 }));
 
   // chevron boards on tight bends, on the outside of the curve
   const chevTex = makeChevron();
-  const boardMat = new THREE.MeshStandardMaterial({ map: chevTex, roughness: 0.5 });
-  const postOnly = new THREE.MeshStandardMaterial({ color: '#8a8d92', roughness: 0.5 });
+  const boardMat = toon({ map: chevTex });
+  const postOnly = toon({ color: '#9aa0aa' });
   const boardGeo = new THREE.BoxGeometry(1.2, 0.9, 0.05);
   boardGeo.translate(0, 1.6, 0);
-  const stickGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.7, 6);
+  const stickGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.7, 5, 1, true);
   stickGeo.translate(0, 0.85, 0);
-  const boards = [], sticks = [];
+  const boards = [];
   for (const [from, to] of spans) for (let d = from + 20; d < to; d += 13) {
     if ((d > TUNNEL.start - 40 && d < TUNNEL.end + 40) || Math.abs(d - BRIDGE.x) < 40 || !parted(d, 16)) continue;
     const k = curvatureAt(d);
     if (Math.abs(k) < 0.0042) continue;
     const outside = k > 0 ? 1 : -1; // left bend (k>0): outside is on the right
-    const m = roadMatrix(d, outside * 7.4, 0); // the board's face points across the road
-    boards.push(m);
-    sticks.push(m);
+    boards.push(roadMatrix(d, outside * 7.4, 0)); // the board's face points across the road
   }
   if (boards.length) {
-    group.add(instanced(boardGeo, boardMat, boards));
-    group.add(instanced(stickGeo, postOnly, sticks));
+    group.add(instancedChunks(boardGeo, boardMat, boards, { per: 24, far: 450 }));
+    group.add(instancedChunks(stickGeo, postOnly, boards, { per: 24, far: 450 }));
   }
+
+  // far-away road furniture is too small to see, so hide each chunk once the camera is well past it
+  const items = [];
+  group.traverse((o) => {
+    if (!o.userData.far) return;
+    const sph = o.isInstancedMesh ? o.boundingSphere : (o.geometry.boundingSphere ?? (o.geometry.computeBoundingSphere(), o.geometry.boundingSphere));
+    items.push([o, sph.center, sph.radius, o.userData.far]);
+  });
+  group.userData.update = (cam) => { for (const [o, c, r, far] of items) o.visible = Math.hypot(c.x - cam.x, c.z - cam.z) - r < far; };
   return group;
 }

@@ -28,75 +28,47 @@ const speckle = (ctx, w, h, n, rand, lo, hi, a) => {
 };
 
 /**
- * Road surface. One tile covers 11.6 m across (shoulder to shoulder) and 12 m along.
- * Returns {map, bump}. Lateral position u = (lat + 5.8) / 11.6.
+ * Road surface: clean blue-grey tarmac with bold white lines. One tile covers 11.6 m across (shoulder to shoulder) and 12 m
+ * along. Returns {map}. Lateral position u = (lat + 5.8) / 11.6.
  */
 export function makeAsphalt(aniso) {
-  const W = 512, H = 1024;
+  const W = 256, H = 512;
   const px = W / 11.6; // pixels per metre across
   const [c, ctx] = canvas(W, H);
   const rand = mulberry32(5);
-  ctx.fillStyle = '#2c303a';
+  ctx.fillStyle = '#566083';
   ctx.fillRect(0, 0, W, H);
-  // shoulders are a touch lighter and coarser
-  ctx.fillStyle = '#3a4150';
+  // shoulders are a lighter slate
+  ctx.fillStyle = '#6a759c';
   ctx.fillRect(0, 0, (5.8 - 4.55) * px, H);
   ctx.fillRect((5.8 + 4.55) * px, 0, (5.8 - 4.55) * px, H);
-  speckle(ctx, W, H, 60000, rand, 25, 80, 0.4);
-  speckle(ctx, W, H, 12000, rand, 90, 150, 0.3);
-  // polished wheel tracks
-  for (const lat of [-3.1, -1.5, 1.5, 3.1]) {
-    const g = ctx.createLinearGradient((lat + 5.8) * px - 0.5 * px, 0, (lat + 5.8) * px + 0.5 * px, 0);
-    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, 'rgba(0,0,0,0.20)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  // a fine, soft grain so big flat areas are not dead
+  speckle(ctx, W, H, 9000, rand, 40, 120, 0.08);
+  // darker bands where the wheels run
+  for (const lat of [-2.4, 2.4]) {
+    const g = ctx.createLinearGradient((lat + 5.8) * px - 0.9 * px, 0, (lat + 5.8) * px + 0.9 * px, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, 'rgba(10,12,30,0.16)'); g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
-    ctx.fillRect((lat + 5.8) * px - 0.5 * px, 0, px, H);
+    ctx.fillRect((lat + 5.8) * px - 0.9 * px, 0, 1.8 * px, H);
   }
-  // patches and cracks
-  for (let i = 0; i < 7; i++) {
-    const w = 30 + rand() * 90, h = 40 + rand() * 140;
-    const x = rand() * (W - w), y = rand() * (H - h);
-    const v = 38 + Math.floor(rand() * 14);
-    ctx.fillStyle = `rgba(${v},${v},${v + 3},0.55)`;
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(15,15,18,0.4)'; ctx.lineWidth = 1.2;
-    ctx.strokeRect(x, y, w, h);
-  }
-  ctx.strokeStyle = 'rgba(12,12,14,0.5)';
-  for (let i = 0; i < 22; i++) {
-    ctx.lineWidth = 0.6 + rand() * 0.9;
-    ctx.beginPath();
-    let x = rand() * W, y = rand() * H;
-    ctx.moveTo(x, y);
-    for (let k = 0; k < 6; k++) { x += (rand() - 0.5) * 34; y += rand() * 30; ctx.lineTo(x, y); }
-    ctx.stroke();
-  }
-  // lane markings
-  const worn = (x, y, w, h, color) => {
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, w, h);
-  };
-  const edge = 0.16 * px;
-  worn((5.8 - 4.35) * px - edge / 2, 0, edge, H, 'rgba(240,240,236,0.92)');
-  worn((5.8 + 4.35) * px - edge / 2, 0, edge, H, 'rgba(240,240,236,0.92)');
-  const dash = 0.13 * px;
-  for (let k = 0; k < 2; k++) worn(5.8 * px - dash / 2, k * (H / 2), dash, (H / 2) * 0.25, 'rgba(240,240,236,0.92)'); // 3 m dash per 6 m
-  // wear the paint away
-  ctx.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 9000; i++) {
-    ctx.fillStyle = `rgba(0,0,0,${0.15 + rand() * 0.5})`;
-    ctx.fillRect(rand() * W, rand() * H, 1 + rand() * 2, 1 + rand() * 3);
-  }
-  ctx.globalCompositeOperation = 'source-over';
-  // destination-out also erased the asphalt under the paint; repaint the base underneath
-  const [c2, ctx2] = canvas(W, H);
-  ctx2.fillStyle = '#2c303a'; ctx2.fillRect(0, 0, W, H);
-  ctx2.drawImage(c, 0, 0);
-  speckle(ctx2, W, H, 30000, rand, 20, 100, 0.35);
+  // lane markings: bold edge lines and a centre dash (3 m on, 3 m off)
+  ctx.fillStyle = '#ffffff';
+  const edge = 0.22 * px;
+  ctx.fillRect((5.8 - 4.35) * px - edge / 2, 0, edge, H);
+  ctx.fillRect((5.8 + 4.35) * px - edge / 2, 0, edge, H);
+  const dash = 0.2 * px;
+  for (let k = 0; k < 2; k++) ctx.fillRect(5.8 * px - dash / 2, k * (H / 2), dash, H / 4);
+  return { map: tex(c, { aniso }) };
+}
 
-  const [b, bctx] = canvas(256, 512);
-  bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, 256, 512);
-  speckle(bctx, 256, 512, 60000, rand, 40, 220, 0.8);
-  return { map: tex(c2, { aniso }), bump: tex(b, { srgb: false, aniso }) };
+/** Red and white kerb stripes: one tile is one red block and one white block along the road. */
+export function makeKerb() {
+  const [c, ctx] = canvas(16, 64);
+  ctx.fillStyle = '#ff3a30'; ctx.fillRect(0, 0, 16, 32);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 32, 16, 32);
+  const t = tex(c, { aniso: 4 });
+  t.magFilter = THREE.NearestFilter;
+  return t;
 }
 
 export function makeWood(aniso) {
@@ -178,18 +150,24 @@ export function makeConcrete(aniso) {
 
 /** A soft cloud puff (white with soft alpha) for billboards. */
 export function makeCloud() {
-  const S = 256;
-  const [c, ctx] = canvas(S, S);
+  const W = 512, H = 256;
+  const [c, ctx] = canvas(W, H);
   const rand = mulberry32(51);
-  ctx.clearRect(0, 0, S, S);
-  for (let i = 0; i < 46; i++) {
-    const a = rand() * Math.PI * 2, r = rand() * S * 0.26;
-    const x = S / 2 + Math.cos(a) * r * 1.3, y = S / 2 + Math.sin(a) * r * 0.55;
-    const rad = 26 + rand() * 44;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
-    g.addColorStop(0, 'rgba(255,255,255,0.34)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#fff';
+  // a cartoon cumulus: a row of overlapping puffs, tallest in the middle, with a flat base
+  const base = H * 0.74;
+  const puffs = 7;
+  for (let i = 0; i < puffs; i++) {
+    const u = (i + 0.5) / puffs;
+    const hump = Math.sin(u * Math.PI);
+    const r = H * (0.13 + 0.2 * hump) * (0.85 + rand() * 0.3);
+    const x = W * (0.12 + 0.76 * u);
+    ctx.beginPath(); ctx.arc(x, base - r * 0.85, r, 0, Math.PI * 2); ctx.fill();
   }
+  ctx.fillRect(W * 0.12, base - H * 0.08, W * 0.76, H * 0.08);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillRect(0, base, W, H - base); // flat bottom
   return tex(c, { repeat: false });
 }
 

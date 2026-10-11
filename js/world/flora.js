@@ -8,6 +8,7 @@ import { LOOP, TOTAL, SPURS, BIOMES, LANDMARKS, TUNNEL, BRIDGE, biomeIndex, spur
 import { frame, place } from './geo.js';
 import { RIVER, LAKE, lakeR } from './terrain.js';
 import { mulberry32, makeNoise, smoothstep as sm } from './noise.js';
+import { toon } from './toon.js';
 
 const CHUNK = 200;
 const rngNoise = makeNoise(99);
@@ -64,30 +65,31 @@ const merge = (parts) => {
 
 function makePine(snowy) {
   const parts = [];
-  parts.push(paint(xf(new THREE.CylinderGeometry(0.22, 0.34, 3.2, 6), { y: 1.6 }), C('#3d2a1b'), C('#5a3d26')));
-  const dark = snowy ? C('#1b7a63') : C('#0c6e3c');
-  for (let i = 0; i < 5; i++) {
-    const r = 3.1 * (1 - i * 0.17), h = 3.5 - i * 0.2;
-    const cone = xf(new THREE.ConeGeometry(r, h, 8, 1), { y: 2.6 + i * 2.15 + h / 2, ry: i * 0.6 });
-    const top = snowy ? C('#f4f8fc') : mixC(C('#1a9a4c'), C('#52dc6c'), i / 5);
-    parts.push(paint(cone, dark, top, (i % 2 ? 0.05 : -0.04)));
-  }
+  parts.push(paint(xf(new THREE.CylinderGeometry(0.26, 0.4, 3.0, 6, 1, true), { y: 1.5 }), C('#5a3a22'), C('#8a5a34')));
+  const dark = snowy ? C('#1fa88a') : C('#0a9a45');
+  // four chunky tiers, wide at the bottom, like a toy pine
+  [[3.3, 3.4, 2.4], [2.7, 3.2, 4.5], [2.1, 3.0, 6.5], [1.4, 2.8, 8.3]].forEach(([r, h, y], i) => {
+    const cone = xf(new THREE.ConeGeometry(r, h, 8, 1, true), { y: y + h / 2, ry: i * 0.5 });
+    const top = snowy ? C('#ffffff') : mixC(C('#22c45a'), C('#6af08a'), i / 3);
+    parts.push(paint(cone, dark, top, (i % 2 ? 0.05 : -0.03)));
+  });
   return merge(parts);
 }
 
 function makeBroadleaf(fruit) {
   const parts = [];
-  parts.push(paint(xf(new THREE.CylinderGeometry(0.28, 0.46, 4.2, 6), { y: 2.1 }), C('#46301f'), C('#6b4a2e')));
-  const blobs = [[0, 6.4, 0, 3.0], [-1.9, 5.2, 0.6, 2.1], [1.9, 5.4, -0.4, 2.2], [0.3, 7.6, 0.4, 2.0], [0.2, 4.9, 1.9, 1.8]];
+  parts.push(paint(xf(new THREE.CylinderGeometry(0.34, 0.5, 4.0, 6, 1, true), { y: 2.0 }), C('#6a4426'), C('#9a6a3a')));
+  // three big puffs of canopy
+  const blobs = [[0, 6.3, 0, 3.2], [-2.0, 5.0, 0.5, 2.2], [2.0, 5.2, -0.4, 2.3]];
   blobs.forEach(([x, y, z, r], i) => {
-    const b = xf(blob(r, 1, 0.22, i * 3.1), { x, y, z });
-    parts.push(paint(b, C('#16a043'), C('#92e84e'), (i % 2 ? 0.06 : -0.03)));
+    const b = xf(blob(r, 1, 0.12, i * 3.1), { x, y, z });
+    parts.push(paint(b, C('#19b042'), C('#a6f55a'), (i % 2 ? 0.05 : -0.02)));
   });
   if (fruit) {
-    for (let i = 0; i < 12; i++) {
-      const a = i * 2.4, r = 2.3 + (i % 3) * 0.4;
-      const f = xf(new THREE.IcosahedronGeometry(0.2, 0), { x: Math.cos(a) * r, y: 4.6 + (i % 5) * 0.7, z: Math.sin(a) * r });
-      parts.push(paint(f, C(i % 3 ? '#c8352f' : '#e0b030'), C(i % 3 ? '#e04a3a' : '#f0cc50')));
+    for (let i = 0; i < 7; i++) {
+      const a = i * 2.4, r = 2.7 + (i % 3) * 0.4;
+      const f = xf(new THREE.IcosahedronGeometry(0.3, 0), { x: Math.cos(a) * r, y: 4.8 + (i % 4) * 0.7, z: Math.sin(a) * r });
+      parts.push(paint(f, C(i % 3 ? '#e02f2f' : '#f0b020'), C(i % 3 ? '#ff6a5a' : '#ffd84a')));
     }
   }
   return merge(parts);
@@ -95,41 +97,41 @@ function makeBroadleaf(fruit) {
 
 function makeBirch() {
   const parts = [];
-  const trunk = new THREE.CylinderGeometry(0.15, 0.2, 6.2, 6);
+  const trunk = new THREE.CylinderGeometry(0.17, 0.23, 6.0, 6, 1, true);
   const tp = trunk.attributes.position;
   const tcol = new Float32Array(tp.count * 3);
   for (let i = 0; i < tp.count; i++) {
     const y = tp.getY(i);
-    const band = Math.sin(y * 5.2) > 0.82;
-    const c = band ? C('#2b2b2b') : C('#e8e6dc');
+    const band = Math.sin(y * 4.4) > 0.8;
+    const c = band ? C('#2b2b3a') : C('#f4f2ea');
     tcol[i * 3] = c.r; tcol[i * 3 + 1] = c.g; tcol[i * 3 + 2] = c.b;
   }
-  trunk.translate(0, 3.1, 0);
+  trunk.translate(0, 3.0, 0);
   trunk.setAttribute('color', new THREE.BufferAttribute(tcol, 3));
   trunk.deleteAttribute('uv');
   parts.push(trunk.toNonIndexed());
-  [[0, 6.4, 0, 1.9], [-1.0, 5.4, 0.5, 1.3], [1.1, 5.7, -0.3, 1.4]].forEach(([x, y, z, r], i) => {
-    parts.push(paint(xf(blob(r, 1, 0.2, i * 5), { x, y, z }), C('#5fd84a'), C('#d8f46a'), 0.02));
+  [[0, 6.5, 0, 2.0], [-1.1, 5.4, 0.5, 1.4]].forEach(([x, y, z, r], i) => {
+    parts.push(paint(xf(blob(r, 1, 0.12, i * 5), { x, y, z }), C('#58e04a'), C('#e6fa72'), 0.02));
   });
   return merge(parts);
 }
 
 function makeBush() {
   const parts = [];
-  [[0, 0.7, 0, 1.0], [-0.9, 0.55, 0.3, 0.75], [0.8, 0.6, -0.2, 0.8]].forEach(([x, y, z, r], i) => {
-    parts.push(paint(xf(blob(r, 1, 0.2, i * 7 + 2), { x, y, z }), C('#14903c'), C('#5ae04c')));
+  [[0, 0.75, 0, 1.1], [-0.95, 0.55, 0.3, 0.8]].forEach(([x, y, z, r], i) => {
+    parts.push(paint(xf(blob(r, 1, 0.1, i * 7 + 2), { x, y, z }), C('#12a83f'), C('#6af05a')));
   });
   return merge(parts);
 }
 
 function makeRock(snowy) {
-  const g = xf(blob(1.3, 1, 0.38, snowy ? 4 : 9), { sx: 1.35, sy: 0.85, sz: 1.1, y: 0.45 }).toNonIndexed();
+  const g = xf(blob(1.3, 1, 0.3, snowy ? 4 : 9), { sx: 1.35, sy: 0.85, sz: 1.1, y: 0.45 }).toNonIndexed();
   const p = g.attributes.position;
   const col = new Float32Array(p.count * 3);
   for (let i = 0; i < p.count; i++) {
     const y = p.getY(i);
-    const v = 0.36 + 0.13 * rngNoise.simplex(p.getX(i) * 2, p.getZ(i) * 2 + y);
-    const c = snowy && y > 0.65 ? C('#f1f5fa') : new THREE.Color(v, v * 0.97, v * 0.92);
+    const v = 0.46 + 0.14 * rngNoise.simplex(p.getX(i) * 2, p.getZ(i) * 2 + y);
+    const c = snowy && y > 0.65 ? C('#ffffff') : new THREE.Color(v * 0.92, v * 0.95, v * 1.12);
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -139,7 +141,7 @@ function makeRock(snowy) {
 }
 
 function makeHay() {
-  const g = xf(new THREE.CylinderGeometry(0.95, 0.95, 1.3, 14), { rx: Math.PI / 2, y: 0.95 });
+  const g = xf(new THREE.CylinderGeometry(0.95, 0.95, 1.3, 10), { rx: Math.PI / 2, y: 0.95 });
   return paint(g, C('#c9a345'), C('#e3c566'));
 }
 
@@ -152,7 +154,7 @@ function makeFence() {
 
 function makeLamp() {
   const parts = [];
-  parts.push(paint(xf(new THREE.CylinderGeometry(0.06, 0.09, 4.4, 6), { y: 2.2 }), C('#2f343c'), C('#454c57')));
+  parts.push(paint(xf(new THREE.CylinderGeometry(0.06, 0.09, 4.4, 5, 1, true), { y: 2.2 }), C('#2f343c'), C('#454c57')));
   parts.push(paint(xf(new THREE.BoxGeometry(0.9, 0.07, 0.07), { x: 0.4, y: 4.4 }), C('#2f343c'), C('#2f343c')));
   parts.push(paint(xf(new THREE.BoxGeometry(0.32, 0.12, 0.2), { x: 0.82, y: 4.34 }), C('#3a4049'), C('#3a4049')));
   return merge(parts);
@@ -213,11 +215,11 @@ function cardTexture(kind) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   const rng = mulberry32(kind.length * 31 + 7);
-  if (kind === 'grass') drawBlades(ctx, W, H, rng, { n: 34, minH: 46, maxH: 112, colors: [[88, 150, 58], [112, 168, 66], [70, 130, 52]] });
-  if (kind === 'dry') drawBlades(ctx, W, H, rng, { n: 30, minH: 40, maxH: 100, colors: [[150, 150, 96], [176, 162, 104], [128, 134, 88]] });
-  if (kind === 'flowers') drawBlades(ctx, W, H, rng, { n: 26, minH: 44, maxH: 100, colors: [[84, 148, 58], [104, 164, 66]], heads: { p: 0.9, r: 6, colors: [[255, 94, 120], [255, 214, 80], [250, 250, 250], [170, 120, 240], [255, 150, 60]] }, width: 2.2 });
-  if (kind === 'wheat') drawBlades(ctx, W, H, rng, { n: 40, minH: 70, maxH: 118, colors: [[206, 172, 74], [222, 188, 88], [190, 156, 62]], heads: { p: 1, r: 4.2, tall: 2.4, colors: [[232, 198, 96], [214, 180, 78]] }, width: 2.4 });
-  if (kind === 'reeds') drawBlades(ctx, W, H, rng, { n: 24, minH: 70, maxH: 124, colors: [[96, 140, 70], [120, 156, 78]], heads: { p: 0.3, r: 5, tall: 3, colors: [[108, 70, 40]] }, width: 2.6 });
+  if (kind === 'grass') drawBlades(ctx, W, H, rng, { n: 18, minH: 50, maxH: 112, colors: [[70, 200, 60], [110, 225, 70], [50, 170, 55]], width: 5 });
+  if (kind === 'dry') drawBlades(ctx, W, H, rng, { n: 16, minH: 44, maxH: 100, colors: [[200, 190, 90], [225, 205, 100], [170, 175, 80]], width: 5 });
+  if (kind === 'flowers') drawBlades(ctx, W, H, rng, { n: 14, minH: 44, maxH: 100, colors: [[70, 200, 60], [100, 220, 70]], heads: { p: 0.9, r: 9, colors: [[255, 70, 110], [255, 220, 40], [255, 255, 255], [170, 110, 255], [255, 140, 30]] }, width: 3 });
+  if (kind === 'wheat') drawBlades(ctx, W, H, rng, { n: 22, minH: 70, maxH: 118, colors: [[240, 190, 40], [255, 210, 60], [225, 170, 30]], heads: { p: 1, r: 6, tall: 2.4, colors: [[255, 215, 70], [250, 195, 50]] }, width: 3.4 });
+  if (kind === 'reeds') drawBlades(ctx, W, H, rng, { n: 14, minH: 70, maxH: 124, colors: [[96, 140, 70], [120, 156, 78]], heads: { p: 0.3, r: 5, tall: 3, colors: [[108, 70, 40]] }, width: 2.6 });
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
@@ -265,7 +267,7 @@ export function windify(material, uTime, strength = 1) {
 // zone tables: density per 3 m slice per side, lateral range and weighted species
 const ZONES = [
   { name: 'meadow', dens: 0.42, lat: [9, 110], sp: [['broadleaf', 6], ['bush', 3], ['rock', 1]] },
-  { name: 'forest', dens: 6.0, lat: [8, 130], sp: [['pine', 74], ['broadleaf', 10], ['birch', 8], ['bush', 5], ['rock', 3]] },
+  { name: 'forest', dens: 4.4, lat: [8, 130], sp: [['pine', 74], ['broadleaf', 10], ['birch', 8], ['bush', 5], ['rock', 3]] },
   { name: 'alpine', dens: 1.4, lat: [8, 150], sp: [['pine', 35], ['rock', 55], ['bush', 10]] },
   { name: 'descent', dens: 1.7, lat: [8, 110], sp: [['orchard', 40], ['broadleaf', 24], ['pine', 14], ['bush', 16], ['rock', 6]] },
   { name: 'lake', dens: 0.9, lat: [8, 110], sp: [['birch', 34], ['broadleaf', 22], ['bush', 20], ['rock', 14], ['pine', 10]] },
@@ -480,30 +482,30 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
   await new Promise((r) => setTimeout(r, 0));
 
   // --- turn buckets into instanced meshes ---------------------------------------------------------
-  const woody = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true });
-  const leafy = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, flatShading: true });
+  const woody = toon({ vertexColors: true });
+  const leafy = toon({ vertexColors: true });
   windify(leafy, uTime, 1.0);
-  const rocky = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
+  const rocky = toon({ vertexColors: true });
   const lampBulbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#fff0c0').multiplyScalar(2.4), toneMapped: false });
   const species = {
-    pine: { geo: makePine(false), mat: leafy, far: 780, shadow: true },
-    snowpine: { geo: makePine(true), mat: leafy, far: 780, shadow: true },
-    broadleaf: { geo: makeBroadleaf(false), mat: leafy, far: 760, shadow: true },
-    orchard: { geo: makeBroadleaf(true), mat: leafy, far: 700, shadow: true },
-    birch: { geo: makeBirch(), mat: leafy, far: 700, shadow: true },
-    bush: { geo: makeBush(), mat: leafy, far: 380, shadow: false },
-    rock: { geo: makeRock(false), mat: rocky, far: 700, shadow: true },
-    snowrock: { geo: makeRock(true), mat: rocky, far: 760, shadow: true },
-    hay: { geo: makeHay(), mat: woody, far: 420, shadow: true },
-    fence: { geo: makeFence(), mat: woody, far: 300, shadow: false },
-    lamp: { geo: makeLamp(), mat: woody, far: 420, shadow: true },
+    pine: { geo: makePine(false), mat: leafy, far: 560, shadow: true },
+    snowpine: { geo: makePine(true), mat: leafy, far: 560, shadow: true },
+    broadleaf: { geo: makeBroadleaf(false), mat: leafy, far: 540, shadow: true },
+    orchard: { geo: makeBroadleaf(true), mat: leafy, far: 500, shadow: true },
+    birch: { geo: makeBirch(), mat: leafy, far: 500, shadow: true },
+    bush: { geo: makeBush(), mat: leafy, far: 240, shadow: false },
+    rock: { geo: makeRock(false), mat: rocky, far: 480, shadow: true },
+    snowrock: { geo: makeRock(true), mat: rocky, far: 560, shadow: true },
+    hay: { geo: makeHay(), mat: woody, far: 300, shadow: true },
+    fence: { geo: makeFence(), mat: woody, far: 200, shadow: false },
+    lamp: { geo: makeLamp(), mat: woody, far: 300, shadow: false },
   };
   const cardGeo = crossedCards(3);
   const cards = {};
   for (const k of ['grass', 'dry', 'flowers', 'wheat', 'reeds']) {
-    const m = new THREE.MeshStandardMaterial({ map: cardTexture(k), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1, color: '#ffffff' });
+    const m = toon({ map: cardTexture(k), alphaTest: 0.5, side: THREE.DoubleSide, color: '#ffffff' });
     windify(m, uTime, k === 'wheat' || k === 'reeds' ? 2.2 : 1.6);
-    cards[k] = { geo: cardGeo, mat: m, far: k === 'wheat' ? 190 : k === 'reeds' ? 260 : 120, shadow: false, card: true };
+    cards[k] = { geo: cardGeo, mat: m, far: k === 'wheat' ? 150 : k === 'reeds' ? 170 : 90, shadow: false, card: true };
   }
   const defs = { ...species, ...cards };
   const all = []; // {mesh, cx, cz, far}
@@ -512,6 +514,8 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
     const d = defs[kind];
     for (const [k, mats] of map) {
       const [ix, iz] = k.split(',').map(Number);
+      // shuffled, so that drawing only the first part of a distant chunk thins it evenly instead of bald-patching its far end
+      for (let n = mats.length - 1; n > 0; n--) { const j = Math.floor(rng() * (n + 1)); [mats[n], mats[j]] = [mats[j], mats[n]]; }
       const mesh = new THREE.InstancedMesh(d.geo, d.mat, mats.length);
       mats.forEach((m, i) => {
         mesh.setMatrixAt(i, m);
@@ -526,7 +530,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
       mesh.computeBoundingSphere();
       mesh.computeBoundingBox?.();
       const cx = (ix + 0.5) * CHUNK, cz = (iz + 0.5) * CHUNK;
-      mesh.userData = { cx, cz, far: d.far + CHUNK * 0.75 };
+      mesh.userData = { cx, cz, far: d.far + CHUNK * 0.75, total: mats.length, shadow: d.shadow };
       mesh.visible = false;
       group.add(mesh);
       all.push(mesh);
@@ -541,7 +545,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
       }
     }
   }
-  const houseMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true });
+  const houseMat = toon({ vertexColors: true });
   for (const [k, geos] of houseChunks) {
     const merged = mergeGeometries(geos);
     const mesh = new THREE.Mesh(merged, houseMat);
@@ -566,7 +570,13 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
         const u = m.userData;
         const dx = Math.abs(cam.x - u.cx), dz = Math.abs(cam.z - u.cz);
         const d = Math.hypot(Math.max(0, dx - CHUNK / 2), Math.max(0, dz - CHUNK / 2));
-        m.visible = d < (u.far - half) * scale;
+        const far = (u.far - half) * scale;
+        m.visible = d < far;
+        if (!m.visible) continue;
+        // thin out the distance: the nearest 40% is drawn in full, then fewer and fewer instances (the chunk is shuffled)
+        if (m.isInstancedMesh && u.total) m.count = Math.max(1, Math.ceil(u.total * Math.min(1, Math.max(0.2, 1.45 - (d / far) * 1.1))));
+        // only what is near the camera is worth drawing into the shadow map a second time
+        if (u.shadow) m.castShadow = d < 85;
       }
     },
   };

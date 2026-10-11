@@ -23,12 +23,18 @@ const { RiderModel, SKINS, HAIRS } = await import('../js/world/riders.js');
 
 const looks = ['pony', 'short', 'bun'].map((hairStyle, i) => ({ jersey: ['#e63946', '#2ec4b6', '#9b5de5'][i], pattern: ['hoops', 'chevron', 'dots'][i], hairStyle, skin: SKINS[i], hair: HAIRS[i], number: String(10 + i) }));
 
-test('every rider builds with a sensible number of parts', () => {
+test('every rider builds light: a couple of dozen meshes and a few thousand triangles', () => {
   for (const look of looks) {
     const m = new RiderModel(look);
-    let meshes = 0;
-    m.group.traverse((o) => { if (o.isMesh) meshes++; });
-    assert.ok(meshes > 30 && meshes < 90, `${meshes} meshes`);
+    let meshes = 0, tris = 0;
+    m.group.traverse((o) => {
+      if (!o.isMesh) return;
+      meshes++;
+      const g = o.geometry;
+      tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    });
+    assert.ok(meshes >= 15 && meshes <= 34, `${meshes} meshes`);
+    assert.ok(tris < 9000, `${Math.round(tris)} triangles`);
   }
 });
 

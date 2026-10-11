@@ -40,42 +40,28 @@ const FRAG = /* glsl */`
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
   }
-  float height(vec2 p, float t) {
-    float h = 0.0;
-    h += noise(p * 0.55 + vec2(t * 0.25, t * 0.18)) * 0.9;
-    h += noise(p * 1.3 + vec2(-t * 0.4, t * 0.3)) * 0.45;
-    h += noise(p * 3.1 + vec2(t * 0.8, -t * 0.55)) * 0.2;
-    return h;
-  }
+  // Cartoon water: depth in a few soft bands, thin drifting highlight lines, white foam along the shore.
   void main() {
     vec2 p = vWorld.xz;
-    if (uFlow > 0.5) p += vec2(0.0, 0.0);
     float t = uTime;
-    float e = 0.18;
-    float h0 = height(p, t);
-    float hx = height(p + vec2(e, 0.0), t);
-    float hz = height(p + vec2(0.0, e), t);
-    vec3 n = normalize(vec3((h0 - hx) * 1.6, 1.0, (h0 - hz) * 1.6));
-    if (uFlow > 0.5) { // stream: ripples run along the ribbon
-      float f = height(vec2(vUv.x * 6.0, vUv.y * 0.9 - t * 1.4), t * 0.5);
-      n = normalize(n + vec3((f - 0.5) * 0.35, 0.0, (f - 0.5) * 0.2));
+    float depth = clamp(vUv.x, 0.0, 1.0);
+    float db = depth * 3.0;
+    db = (floor(db) + smoothstep(0.3, 0.7, fract(db))) / 3.0;
+    vec3 col = mix(uShallow, uDeep, db) * 1.25;
+    vec2 q = uFlow > 0.5 ? vec2(vUv.x * 7.0, vUv.y * 1.4 - t * 0.9) : p * 0.2 + vec2(t * 0.07, t * 0.05);
+    float n = noise(q) + 0.5 * noise(q * 2.3 - vec2(t * 0.1, -t * 0.08));
+    float line = smoothstep(0.07, 0.035, abs(fract(n * 3.2) - 0.5));
+    col = mix(col, vec3(1.0), line * 0.32);
+    col = mix(col, uSkyHorizon * 1.6, 0.1);
+    float foam = 0.0;
+    if (uFlow > 0.5) {
+      float edge = smoothstep(0.0, 0.16, vUv.x) * smoothstep(1.0, 0.84, vUv.x);
+      foam = (1.0 - edge) * (0.55 + 0.45 * noise(vec2(vUv.x * 12.0, vUv.y * 3.0 - t * 2.0)));
+    } else {
+      foam = (1.0 - smoothstep(0.0, 0.09 + 0.05 * noise(p * 0.5 + t * 0.2), depth)) * 0.95;
     }
-    vec3 V = normalize(cameraPosition - vWorld);
-    float cosT = clamp(dot(n, V), 0.0, 1.0);
-    float fres = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
-    vec3 R = reflect(-V, n);
-    float up = clamp(R.y, 0.0, 1.0);
-    vec3 sky = mix(uSkyHorizon, uSkyZenith, pow(up, 0.55)) * 2.6; // the sky dome is HDR, so match its brightness
-    float sunAmt = pow(max(dot(R, normalize(uSunDir)), 0.0), 260.0);
-    float glitter = pow(max(dot(R, normalize(uSunDir)), 0.0), 36.0) * 0.18;
-    float depth = clamp(vUv.x, 0.0, 1.0); // lake: radial 0=shore side handled by caller
-    vec3 body = mix(uShallow, uDeep, depth);
-    vec3 col = mix(body * 1.5, sky, clamp(fres * 0.9, 0.0, 0.85)) + uSunColor * (sunAmt * 3.2 + glitter * 1.6);
-    // foam where the stream is shallow
-    float edge = uFlow > 0.5 ? smoothstep(0.0, 0.16, vUv.x) * smoothstep(1.0, 0.84, vUv.x) : 1.0;
-    float foam = uFlow > 0.5 ? (1.0 - edge) * (0.55 + 0.45 * noise(vec2(vUv.x * 12.0, vUv.y * 3.0 - t * 2.0))) : 0.0;
-    col = mix(col, vec3(0.92, 0.96, 1.0), foam * 0.8);
-    float alpha = uFlow > 0.5 ? mix(0.55, 0.92, edge) : mix(0.55, 0.96, depth);
+    col = mix(col, vec3(1.0), clamp(foam, 0.0, 1.0));
+    float alpha = uFlow > 0.5 ? 0.9 : mix(0.7, 0.97, depth);
     gl_FragColor = vec4(col, alpha);
     #include <fog_fragment>
   }
@@ -85,13 +71,14 @@ export function makeWaterMaterial(shared, flow = 0) {
   return new THREE.ShaderMaterial({
     uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uTime: shared.uTime, uSunDir: shared.uSunDir, uSunColor: shared.uSunColor, uSkyHorizon: shared.uSkyHorizon, uSkyZenith: shared.uSkyZenith,
-      uShallow: { value: new THREE.Color('#2f9aa6') }, uDeep: { value: new THREE.Color('#0f4f7a') }, uFlow: { value: flow }, uStorm: { value: 0 },
+      uShallow: { value: new THREE.Color('#2fe0d0') }, uDeep: { value: new THREE.Color('#1580e0') }, uFlow: { value: flow }, uStorm: { value: 0 },
     }]),
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,
     depthWrite: false,
     fog: true,
+    side: THREE.DoubleSide, // the lake's triangles wind downward, so it must show from above regardless
   });
 }
 
@@ -107,7 +94,7 @@ export function makeWaterUniforms() {
 }
 
 export function buildLake(shared) {
-  const rings = 26, segs = 112;
+  const rings = 14, segs = 72;
   const pos = [], uv = [], idx = [];
   const N = { x: -LAKE.tz, z: LAKE.tx };
   for (let r = 0; r <= rings; r++) {
@@ -159,8 +146,8 @@ export function buildRiver(shared) {
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   const mat = makeWaterMaterial(shared, 1);
-  mat.uniforms.uShallow.value.set('#3a9aa0');
-  mat.uniforms.uDeep.value.set('#1a6a8c');
+  mat.uniforms.uShallow.value.set('#44e8d0');
+  mat.uniforms.uDeep.value.set('#1f9ae0');
   const m = new THREE.Mesh(g, mat);
   m.renderOrder = 5;
   m.frustumCulled = false;

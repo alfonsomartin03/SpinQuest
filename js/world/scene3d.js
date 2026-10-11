@@ -13,7 +13,7 @@ import { courseAt } from '../route.js';
 import { POWER_ZONES, HR_ZONES, clamp } from '../physics.js';
 import { orbAt, ORB_SPACING } from '../game.js';
 import { frame, place, BOUNDS, LOOP_BOUNDS } from './geo.js';
-import { TerrainField, buildTerrainMesh, makeDetailTexture } from './terrain.js';
+import { TerrainField, buildTerrainMesh, tileTerrain, makeDetailTexture } from './terrain.js';
 import { buildRoad } from './road.js';
 import { buildTunnel, buildBridge, buildViaducts } from './structures.js';
 import { buildLake, buildRiver, makeWaterUniforms } from './water.js';
@@ -22,6 +22,7 @@ import { buildFlora } from './flora.js';
 import { buildLandmarks, landmarkPads } from './landmarks.js';
 import { RiderModel, makeNameTag, SKINS, HAIRS } from './riders.js';
 import { OrbField, Particles, AmbientParticles, FinalShader } from './effects.js';
+import { toon, cartoonize } from './toon.js';
 
 /** Snow falling on the top of Death Road: none below 1,450 m, a steady fall above 1,600 m. */
 const smoothSnow = (alt) => Math.max(0, Math.min(1, (alt - 1450) / 150)) * 0.9;
@@ -62,7 +63,7 @@ export class Renderer {
     this.canvas = canvas;
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
-    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
+    this.gl.toneMapping = THREE.NeutralToneMapping; // keeps the bold toon colours instead of washing them out
     this.gl.toneMappingExposure = 0.62;
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     this.scene = new THREE.Scene();
@@ -96,7 +97,7 @@ export class Renderer {
 
     await step(0.06, 'Shaping the land');
     const detail = makeDetailTexture(this.field.noise);
-    const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: detail, roughness: 0.96, metalness: 0 });
+    const terrainMat = toon({ vertexColors: true, map: detail });
     // The fine mesh covers the loop's whole neighbourhood and, along the extension, only the land within FINE_R of the road.
     const rect = (r) => (x, z) => Math.max(r.x0 - x, x - r.x1, r.z0 - z, z - r.z1); // signed distance to a rectangle
     const loopArea = rect({ x0: LOOP_BOUNDS.minX - 800, z0: LOOP_BOUNDS.minZ - 800, x1: LOOP_BOUNDS.maxX + 800, z1: LOOP_BOUNDS.maxZ + 800 });
@@ -104,17 +105,19 @@ export class Renderer {
     const fineDist = (x, z) => Math.min(loopArea(x, z), this.field.grid(x, z, tmp).dist - FINE_R);
     const inner = { x0: BOUNDS.minX - FINE_R - 60, z0: BOUNDS.minZ - FINE_R - 60, x1: BOUNDS.maxX + FINE_R + 60, z1: BOUNDS.maxZ + FINE_R + 60 };
     const innerGeo = await buildTerrainMesh(this.field, { ...inner, cell: 10, cover: fineDist, onProgress: (f) => onProgress(0.06 + f * 0.34, 'Shaping the land') });
-    this.terrain = new THREE.Mesh(innerGeo, terrainMat);
-    this.terrain.receiveShadow = true;
-    this.terrain.castShadow = false;
+    this.terrain = new THREE.Group();
+    for (const g of tileTerrain(innerGeo, 520)) { const m = new THREE.Mesh(g, terrainMat); m.receiveShadow = true; this.terrain.add(m); }
     this.scene.add(this.terrain);
     await step(0.42, 'Raising the mountains');
-    const outerGeo = await buildTerrainMesh(this.field, { x0: -7000, z0: -9000, x1: 9000, z1: 7000, cell: 48, sinkInside: fineDist });
-    const outer = new THREE.Mesh(outerGeo, new THREE.MeshStandardMaterial({ vertexColors: true, map: detail, roughness: 0.97, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }));
+    const outerGeo = await buildTerrainMesh(this.field, { x0: -7000, z0: -9000, x1: 9000, z1: 7000, cell: 48, checker: 144, sinkInside: fineDist });
+    const outerMat = toon({ vertexColors: true, map: detail, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 });
+    const outer = new THREE.Group();
+    for (const g of tileTerrain(outerGeo, 2400)) outer.add(new THREE.Mesh(g, outerMat));
     this.scene.add(outer);
 
     await step(0.55, 'Paving the road');
-    this.scene.add(buildRoad({ anisotropy: aniso }));
+    this.road = buildRoad({ anisotropy: aniso });
+    this.scene.add(this.road);
     this.scene.add(buildTunnel({ anisotropy: aniso }));
     this.scene.add(buildBridge({ anisotropy: aniso }));
     this.scene.add(buildViaducts(this.field, { anisotropy: aniso }));
@@ -124,7 +127,7 @@ export class Renderer {
     this.scene.add(buildLake(this.water), buildRiver(this.water));
 
     await step(0.64, 'Planting forests');
-    this.flora = await buildFlora(this.field, { density: 1, grassDensity: 1, onProgress: (f) => onProgress(0.64 + f * 0.26, 'Planting forests') });
+    this.flora = await buildFlora(this.field, { density: 1, grassDensity: 0.6, onProgress: (f) => onProgress(0.64 + f * 0.26, 'Planting forests') });
     this.scene.add(this.flora.group);
 
     await step(0.92, 'Raising landmarks');
@@ -137,7 +140,7 @@ export class Renderer {
     this.birds = buildBirds();
     this.scene.add(this.balloons, this.birds);
     this.snow = new AmbientParticles({ count: 1400, box: 44, fall: 2.2, drift: 0.9, color: '#ffffff', size: 1.15, alpha: 0.85 });
-    this.dust = new AmbientParticles({ count: 500, box: 50, fall: 0.25, drift: 0.7, color: '#ffd9a0', size: 0.9, alpha: 0.5, rise: true });
+    this.dust = new AmbientParticles({ count: 500, box: 50, fall: 0.25, drift: 0.7, color: '#ffd9a0', size: 0.5, alpha: 0.4, rise: true });
     this.scene.add(this.snow.mesh, this.dust.mesh);
 
     this.orbs = new OrbField();
@@ -155,6 +158,7 @@ export class Renderer {
     this.tunnelLight = new THREE.PointLight('#ffd9a0', 0, 34, 1.6);
     this.scene.add(this.tunnelLight);
 
+    cartoonize(this.scene); // anything built with standard PBR materials gets the cel-shaded look too
     this.#setupPost();
     this.applyQuality(this.quality);
     this.resize();
@@ -361,10 +365,12 @@ export class Renderer {
     const k = 1 - this.tunnel * 0.94;
     this.sky.sun.intensity *= k;
     this.sky.hemi.intensity *= 1 - this.tunnel * 0.82;
-    this.scene.environmentIntensity *= 1 - this.tunnel * 0.92;
     this.tunnelLight.intensity = this.tunnel * 55;
     this.tunnelLight.position.set(this.camera.position.x, this.camera.position.y + 2.4, this.camera.position.z).lerp(new THREE.Vector3(um.position.x, um.position.y + 3.4, um.position.z), 0.5);
     this.gl.toneMappingExposure = st.exposure * (1 + this.tunnel * 0.35);
+
+    this.road.userData.uTime.value = t;
+    this.road.userData.update(this.camera.position);
 
     // water
     const w = this.water;

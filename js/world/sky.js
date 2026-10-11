@@ -2,33 +2,30 @@
 // bright morning on the climb, golden hour along the lake.
 
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
 import { makeCloud } from './textures.js';
 import { smoothstep as sm, lerp, hash1 } from './noise.js';
 
 const TAU = Math.PI * 2;
+const MIN_LIGHT_ELEV = (30 * Math.PI) / 180;
 const col = (h) => new THREE.Color(h);
 
 // A bright, saturated arena palette: deep blue sky, clean white clouds, warm sun, and a punchy orange-to-violet sunset.
 const DAY = {
   sun: col('#fff3dc'), sunI: 3.8, hemiSky: col('#6fb2ff'), hemiGround: col('#2f8a3c'), hemiI: 0.78,
-  fog: col('#8fc8ff'), zenith: col('#1b8aff'), horizon: col('#a2dcff'), cloud: col('#ffffff'), cloudShade: col('#b4d2fb'),
-  turbidity: 2.0, rayleigh: 1.7, mie: 0.004, mieG: 0.8, exposure: 0.7, bloom: 0.3,
+  fog: col('#8fc8ff'), zenith: col('#2a8cf0'), horizon: col('#b4e4ff'), cloud: col('#ffffff'), cloudShade: col('#b4d2fb'),
+  turbidity: 2.0, rayleigh: 1.7, mie: 0.004, mieG: 0.8, exposure: 1.1, bloom: 0.3,
 };
 const GOLD = {
-  sun: col('#ff8a2a'), sunI: 3.4, hemiSky: col('#ffa77e'), hemiGround: col('#8a5a72'), hemiI: 0.92,
+  sun: col('#ff8a2a'), sunI: 3.4, hemiSky: col('#ffb08a'), hemiGround: col('#9a6a82'), hemiI: 1.15,
   fog: col('#ffa878'), zenith: col('#3a3fd0'), horizon: col('#ff9a5a'), cloud: col('#ffbb80'), cloudShade: col('#c0488a'),
-  turbidity: 7.0, rayleigh: 2.6, mie: 0.004, mieG: 0.8, exposure: 0.66, bloom: 0.4,
+  turbidity: 7.0, rayleigh: 2.6, mie: 0.004, mieG: 0.8, exposure: 1.12, bloom: 0.4,
 };
 
 export class SkySystem {
   constructor(scene, renderer, { shadowMap = 2048 } = {}) {
     this.scene = scene;
     this.renderer = renderer;
-    // the visible sky is a clean gradient dome (deep blue overhead, bright horizon, warm sun glow); the physical Sky below
-    // is only used to light the reflections
-    this.sky = new Sky();
-    this.sky.visible = false;
+    // the sky is a clean gradient dome in soft bands (deep blue overhead, bright horizon) with a hard-edged cartoon sun
     this.dome = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
       uniforms: { uZenith: { value: new THREE.Color() }, uHorizon: { value: new THREE.Color() }, uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSunColor: { value: new THREE.Color() } },
       vertexShader: /* glsl */`
@@ -44,9 +41,13 @@ export class SkySystem {
         void main() {
           vec3 d = normalize(vDir);
           float up = clamp(d.y, 0.0, 1.0);
-          vec3 col = mix(uHorizon, uZenith, smoothstep(0.0, 0.62, pow(up, 0.6)));
-          float sd = max(dot(d, normalize(uSunDir)), 0.0);
-          col += uSunColor * (0.22 * pow(sd, 6.0) + 0.5 * pow(sd, 48.0) + 7.0 * pow(sd, 1400.0));
+          float k = smoothstep(0.0, 0.62, pow(up, 0.6)) * 7.0;
+          k = (floor(k) + smoothstep(0.3, 0.7, fract(k))) / 7.0; // soft poster bands
+          vec3 col = mix(uHorizon, uZenith, k);
+          float sd = dot(d, normalize(uSunDir));
+          col += uSunColor * 0.3 * smoothstep(0.985, 0.992, sd);   // wide glow ring
+          col += uSunColor * 0.5 * smoothstep(0.9975, 0.9985, sd); // inner ring
+          col = mix(col, uSunColor * 3.2, smoothstep(0.99935, 0.99945, sd)); // the disc
           col = mix(col, uHorizon * 0.92, smoothstep(0.0, -0.25, d.y));
           gl_FragColor = vec4(col, 1.0);
         }`,
@@ -55,20 +56,13 @@ export class SkySystem {
     this.dome.renderOrder = -2;
     this.dome.frustumCulled = false;
     scene.add(this.dome);
-    this.envSky = new Sky();
-    this.envSky.scale.setScalar(40000);
-    this.envScene = new THREE.Scene();
-    this.envScene.add(this.envSky);
-    this.pmrem = new THREE.PMREMGenerator(renderer);
-    this.envTarget = null;
-    this.lastEnvElev = -99;
 
     this.sun = new THREE.DirectionalLight('#fff1dc', 3);
     this.sun.castShadow = shadowMap > 0;
     if (shadowMap > 0) {
       this.sun.shadow.mapSize.set(shadowMap, shadowMap);
       const c = this.sun.shadow.camera;
-      c.near = 10; c.far = 700; c.left = -90; c.right = 90; c.top = 90; c.bottom = -90;
+      c.near = 10; c.far = 700; c.left = -70; c.right = 70; c.top = 70; c.bottom = -70;
       this.sun.shadow.bias = -0.00035;
       this.sun.shadow.normalBias = 0.35;
     }
@@ -79,12 +73,13 @@ export class SkySystem {
     scene.fog = new THREE.FogExp2('#bcd6ee', 0.00042);
 
     this.dir = new THREE.Vector3(0.3, 0.6, 0.3).normalize();
+    this.lightDir = this.dir.clone(); // what actually lights and shadows the world: never lower than MIN_LIGHT_ELEV
     this.state = { gold: 0, exposure: 0.62, bloom: 0.22, fog: DAY.fog.clone(), zenith: DAY.zenith.clone(), horizon: DAY.horizon.clone(), cloud: DAY.cloud.clone(), cloudShade: DAY.cloudShade.clone(), sunColor: DAY.sun.clone() };
     this.#buildClouds();
   }
 
   #buildClouds() {
-    const count = 70;
+    const count = 30;
     const base = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = base.index;
@@ -94,8 +89,8 @@ export class SkySystem {
     for (let i = 0; i < count; i++) {
       const a = hash1(i * 3.7) * TAU, r = 800 + hash1(i * 9.1) * 6500;
       off[i * 3] = 800 + Math.cos(a) * r; off[i * 3 + 1] = 950 + hash1(i * 5.3) * 700; off[i * 3 + 2] = -1300 + Math.sin(a) * r;
-      const w = 900 + hash1(i * 2.1) * 1400;
-      size[i * 2] = w; size[i * 2 + 1] = w * (0.38 + hash1(i * 6.6) * 0.2);
+      const w = 800 + hash1(i * 2.1) * 1200;
+      size[i * 2] = w; size[i * 2 + 1] = w * 0.5;
       seed[i] = hash1(i * 1.3);
     }
     geo.setAttribute('aOffset', new THREE.InstancedBufferAttribute(off, 3));
@@ -123,10 +118,11 @@ export class SkySystem {
         uniform sampler2D uMap; uniform vec3 uColor; uniform vec3 uShade;
         varying vec2 vUv; varying float vSeed; varying float vDist;
         void main() {
-          vec4 t = texture2D(uMap, vUv);
-          vec3 c = mix(uShade, uColor, smoothstep(0.15, 0.85, vUv.y + (vSeed - 0.5) * 0.2));
+          float a = smoothstep(0.42, 0.58, texture2D(uMap, vUv).a); // crisp cartoon edge
           float fade = smoothstep(9000.0, 3500.0, vDist) * smoothstep(300.0, 1400.0, vDist);
-          gl_FragColor = vec4(c, t.a * 0.85 * fade);
+          if (a * fade < 0.02) discard;
+          vec3 c = mix(uShade, uColor, step(0.4, vUv.y + (vSeed - 0.5) * 0.12)); // a flat shadowed underside
+          gl_FragColor = vec4(c, a * 0.96 * fade);
         }`,
       transparent: true, depthWrite: false, fog: false,
     });
@@ -142,6 +138,9 @@ export class SkySystem {
     const elev = lerp(7, 52, c) * (Math.PI / 180);
     const az = (205 + 70 * Math.sin(TAU * progress)) * (Math.PI / 180);
     this.dir.set(Math.cos(elev) * Math.sin(az), Math.sin(elev), -Math.cos(elev) * Math.cos(az));
+    // a sun skimming the horizon makes every flat surface shadow itself, so the sky keeps the low sun but the light stays higher
+    const ye = Math.max(this.dir.y, Math.sin(MIN_LIGHT_ELEV)), h = Math.hypot(this.dir.x, this.dir.z) || 1, hs = Math.sqrt(1 - ye * ye) / h;
+    this.lightDir.set(this.dir.x * hs, ye, this.dir.z * hs);
     const t = sm(0.12, 0.62, c); // 0 = golden, 1 = day
     const gold = 1 - t;
     const L = (k) => DAY[k] instanceof THREE.Color ? DAY[k].clone().lerp(GOLD[k], gold) : lerp(DAY[k], GOLD[k], gold);
@@ -168,31 +167,13 @@ export class SkySystem {
 
     const du = this.dome.material.uniforms;
     du.uZenith.value.copy(st.zenith); du.uHorizon.value.copy(st.horizon); du.uSunDir.value.copy(this.dir); du.uSunColor.value.copy(st.sunColor);
-    for (const s of [this.sky, this.envSky]) {
-      const u = s.material.uniforms;
-      u.turbidity.value = L('turbidity');
-      u.rayleigh.value = L('rayleigh');
-      u.mieCoefficient.value = L('mie');
-      u.mieDirectionalG.value = L('mieG');
-      u.sunPosition.value.copy(this.dir);
-    }
     if (followPos) this.follow(followPos);
-
-    // refresh the reflection environment when the sun has moved a bit
-    const e = this.dir.y;
-    if (Math.abs(e - this.lastEnvElev) > 0.025) {
-      this.lastEnvElev = e;
-      this.envTarget?.dispose();
-      this.envTarget = this.pmrem.fromScene(this.envScene, 0, 1, 100000);
-      this.scene.environment = this.envTarget.texture;
-      this.scene.environmentIntensity = lerp(0.9, 0.55, gold);
-    }
   }
 
   /** Keep the shadow box and sky centred on the camera focus. */
   follow(p) {
     this.sun.target.position.copy(p);
-    this.sun.position.copy(p).addScaledVector(this.dir, 380);
+    this.sun.position.copy(p).addScaledVector(this.lightDir, 380);
     this.cloudMat.uniforms.uWrap.value.set(p.x, p.z);
   }
 

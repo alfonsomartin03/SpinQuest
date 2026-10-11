@@ -11,11 +11,13 @@ import { hash1 } from './noise.js';
 export class OrbField {
   constructor() {
     this.max = 90;
-    const geo = new THREE.IcosahedronGeometry(0.2, 2);
+    // glowing gems: a stretched octahedron is eight triangles, and reads as a pickup at any distance
+    const geo = new THREE.OctahedronGeometry(0.27, 0);
+    geo.scale(0.85, 1.3, 0.85);
     this.mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }), this.max);
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
-    this.halo = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.34, 1), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.07, depthWrite: false, toneMapped: false }), this.max);
+    this.halo = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.46, 0).scale(0.9, 1.3, 0.9), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.16, depthWrite: false, toneMapped: false }), this.max);
     this.halo.frustumCulled = false;
     this.halo.count = 0;
     this.group = new THREE.Group();
@@ -200,18 +202,15 @@ export const FinalShader = {
       vec2 dir = (vUv - 0.5);
       // radial speed blur, stronger toward the edges and leaving the centre sharp
       float blur = uSpeed * smoothstep(0.12, 0.75, r) * 0.05;
-      vec3 col = vec3(0.0);
-      const int N = 7;
-      for (int i = 0; i < N; i++) {
-        float k = float(i) / float(N - 1);
-        vec2 uv = vUv - dir * blur * k;
-        vec3 s = texture2D(tDiffuse, uv).rgb;
-        float ca = uSpeed * 0.0035 * smoothstep(0.1, 0.8, r);
-        s.r = texture2D(tDiffuse, uv - dir * ca).r;
-        s.b = texture2D(tDiffuse, uv + dir * ca).b;
-        col += s;
+      vec3 col;
+      if (blur < 0.0006) { // most of the time, and most of the screen: a single sample
+        col = texture2D(tDiffuse, vUv).rgb;
+      } else {
+        col = vec3(0.0);
+        const int N = 4;
+        for (int i = 0; i < N; i++) col += texture2D(tDiffuse, vUv - dir * blur * (float(i) / float(N - 1))).rgb;
+        col /= float(N);
       }
-      col /= float(N);
       // vignette
       float vig = smoothstep(0.95, 0.28, r);
       col *= mix(0.72, 1.0, vig) * mix(1.0, 0.55, uTunnel * smoothstep(0.2, 0.9, r));
@@ -219,14 +218,12 @@ export const FinalShader = {
       col += uHrColor * uHrAmt * (0.12 + 0.55 * uPulse) * smoothstep(0.32, 0.95, r);
       // arena grade: richer colour and a touch more contrast, so the world pops like a stadium broadcast
       float luma = dot(col, vec3(0.299, 0.587, 0.114));
-      col = mix(vec3(luma), col, 1.32);
+      col = mix(vec3(luma), col, 1.16);
       col = pow(max(col, vec3(0.0)), vec3(1.06));
       // golden-hour grade
       col *= mix(vec3(1.0), vec3(1.06, 0.97, 0.86), uGold);
       col += vec3(0.04, 0.03, 0.0) * uGold * smoothstep(0.1, 0.0, abs(vUv.y - 0.5));
       col += uFlash * vec3(1.0, 0.95, 0.8) * 0.35;
-      // fine grain breaks up banding in the sky
-      col += (hash(vUv * vec2(1920.0, 1080.0) + uTime) - 0.5) * 0.012;
       gl_FragColor = vec4(col, 1.0);
     }`,
 };

@@ -315,49 +315,50 @@ function buildCrowd(spots, field) {
   const flagged = people.filter((p) => p.flag);
   const poles = new THREE.InstancedMesh(flagPole, mat('#d4d4d4'), Math.max(1, flagged.length));
   const flags = new THREE.InstancedMesh(flagGeo, new THREE.MeshStandardMaterial({ color: '#ffffff', side: THREE.DoubleSide, roughness: 0.8 }), Math.max(1, flagged.length));
-  people.forEach((p, i) => bodies.setColorAt(i, p.shirt));
-  flagged.forEach((p, i) => flags.setColorAt(i, C(['#e63946', '#2f7fd0', '#f2b632', '#2fa36b'][i % 4])));
-  for (const m of [bodies, heads, legs, arms, poles, flags]) { m.frustumCulled = false; m.castShadow = true; }
+  const flagColors = ['#e63946', '#2f7fd0', '#f2b632', '#2fa36b'].map((h) => C(h));
+  people.forEach((p, i) => { p.flagColor = flagColors[i % 4]; });
+  for (const m of [bodies, heads, legs, arms, poles, flags]) { m.frustumCulled = false; m.castShadow = false; }
   const group = new THREE.Group();
   group.add(bodies, heads, legs, arms, poles, flags);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), qa = new THREE.Quaternion(), e = new THREE.Euler();
   const p3 = new THREE.Vector3(), s3 = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), local = new THREE.Matrix4(), tmp = new THREE.Matrix4();
+  // Only the spectators near the camera are laid out, packed at the front of each instanced buffer, so the far ones cost nothing
+  // (instanced meshes are always drawn whole, and zero-scale "parked" instances still cost vertex work).
   const cheer = (t, cam, mood) => {
-    let fi = 0;
+    let a = 0, fi = 0;
     for (let i = 0; i < n; i++) {
       const p = people[i];
-      const near = (p.x - cam.x) ** 2 + (p.z - cam.z) ** 2 < 260 * 260;
-      if (!near) { // park out of sight, cheaply
-        s3.set(0, 0, 0); p3.set(p.x, p.y, p.z); m4.compose(p3, q.identity(), s3);
-        bodies.setMatrixAt(i, m4); heads.setMatrixAt(i, m4); legs.setMatrixAt(i, m4); arms.setMatrixAt(i * 2, m4); arms.setMatrixAt(i * 2 + 1, m4);
-        if (p.flag) { poles.setMatrixAt(fi, m4); flags.setMatrixAt(fi, m4); fi++; }
-        continue;
-      }
+      if ((p.x - cam.x) ** 2 + (p.z - cam.z) ** 2 >= 220 * 220) continue;
       const bounce = Math.abs(Math.sin(t * (4 + mood) + p.ph)) * 0.22 * mood;
       q.setFromAxisAngle(up, p.face);
       s3.setScalar(p.scale);
       p3.set(p.x, p.y + bounce, p.z);
       m4.compose(p3, q, s3);
-      bodies.setMatrixAt(i, m4); legs.setMatrixAt(i, m4);
+      bodies.setMatrixAt(a, m4); bodies.setColorAt(a, p.shirt); legs.setMatrixAt(a, m4);
       local.makeTranslation(0, 1.72, 0);
-      heads.setMatrixAt(i, tmp.multiplyMatrices(m4, local));
+      heads.setMatrixAt(a, tmp.multiplyMatrices(m4, local));
       for (let k = 0; k < 2; k++) {
         const side = k ? -1 : 1;
         const wave = Math.sin(t * 8 + p.ph + k * 2) * 0.5;
         e.set(side * (0.5 + wave * 0.7), 0, side * (2.3 + wave * 0.35));
         qa.setFromEuler(e);
         local.compose(p.flag && k === 0 ? p3.set(0.05, 1.5, side * 0.26) : p3.set(0, 1.5, side * 0.26), qa, s3.set(1, 1, 1));
-        arms.setMatrixAt(i * 2 + k, tmp.multiplyMatrices(m4, local));
+        arms.setMatrixAt(a * 2 + k, tmp.multiplyMatrices(m4, local));
       }
       if (p.flag) {
         local.makeTranslation(0.1, 1.45, 0.3);
         poles.setMatrixAt(fi, tmp.multiplyMatrices(m4, local));
         local.makeTranslation(0.1, 3.0, 0.3);
         flags.setMatrixAt(fi, tmp.multiplyMatrices(m4, local));
+        flags.setColorAt(fi, p.flagColor);
         fi++;
       }
+      a++;
     }
-    for (const m of [bodies, heads, legs, arms, poles, flags]) m.instanceMatrix.needsUpdate = true;
+    bodies.count = heads.count = legs.count = a;
+    arms.count = a * 2;
+    poles.count = flags.count = fi;
+    for (const m of [bodies, heads, legs, arms, poles, flags]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
   };
   return { group, cheer, count: n };
 }
@@ -447,6 +448,7 @@ export function buildLandmarks(field) {
   const group = new THREE.Group();
   group.name = 'landmarks';
   const anim = [];
+  const placed = []; // everything standing beside the road, so it can be hidden when far away
   const rng = mulberry32(31337);
   const placeObj = (obj, d, lat, { yawFrom = 'road', y = null } = {}) => {
     const f = frame(d);
@@ -455,6 +457,7 @@ export function buildLandmarks(field) {
     obj.position.set(p.x, h, p.z);
     obj.rotation.y = yawFrom === 'road' ? faceRoad(f, lat) : -Math.atan2(f.tz, f.tx);
     group.add(obj);
+    placed.push(obj);
     return obj;
   };
 
@@ -565,7 +568,19 @@ export function buildLandmarks(field) {
   ], field);
   group.add(crowd.group);
 
+  // hide landmarks that are far away, and only let the ones close by cast shadows
+  const entries = placed.map((obj) => {
+    const meshes = [];
+    obj.traverse((m) => { if (m.isMesh && m.castShadow) meshes.push(m); });
+    return { obj, meshes, near: true, far: obj === group.userData.castle ? 2400 : 1200 };
+  });
   group.userData.update = (t, cam) => {
+    for (const e of entries) {
+      const dd = Math.hypot(e.obj.position.x - cam.x, e.obj.position.z - cam.z);
+      e.obj.visible = dd < e.far;
+      const near = dd < 150;
+      if (near !== e.near) { e.near = near; for (const m of e.meshes) m.castShadow = near; }
+    }
     for (const a of anim) a(t);
     crowd.cheer(t, cam, 1);
     const castleFlags = group.userData.castle?.userData.flags;

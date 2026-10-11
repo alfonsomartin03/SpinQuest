@@ -383,7 +383,7 @@ export function makeDetailTexture(noise) {
  * area (negative inside), or a rectangle. `cover` is the same kind of function and limits this mesh to the area where it
  * is <= 0, so a fine mesh only spends vertices where it is needed.
  */
-export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside = null, cover = null, onProgress = null }) {
+export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside = null, cover = null, checker = 36, onProgress = null }) {
   const nx = Math.ceil((x1 - x0) / cell) + 1;
   const nz = Math.ceil((z1 - z0) / cell) + 1;
   const count = nx * nz;
@@ -450,7 +450,9 @@ export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside
     let c = [aux.ground[i * 3], aux.ground[i * 3 + 1], aux.ground[i * 3 + 2]];
     const v1 = noise.fbm(x * 0.021 + 40, z * 0.021, 3);
     const v2 = noise.fbm(x * 0.0042, z * 0.0042 + 90, 3);
-    const bright = 1 + 0.16 * v1 + 0.1 * v2;
+    // a soft chequer, like mown stripes, gives the flat meadows scale and a sense of speed
+    const chk = (Math.floor(x / checker) + Math.floor(z / checker)) & 1 ? 1 : -1;
+    const bright = 1 + 0.08 * v1 + 0.06 * v2 + 0.045 * chk;
     c = [c[0] * bright, c[1] * bright * (1 + 0.04 * v2), c[2] * bright * (1 - 0.05 * v2)];
     // exposed rock on steep ground and high up
     const rockAmt = Math.max(sm(0.5, 1.05, slope), sm(190, 330, h + v2 * 30) * 0.55);
@@ -473,4 +475,34 @@ export async function buildTerrainMesh(field, { x0, z0, x1, z1, cell, sinkInside
   geo.computeBoundingSphere();
   geo.computeBoundingBox();
   return geo;
+}
+
+/**
+ * Split a terrain geometry into square tiles that share its vertex data, so the renderer can skip every tile that is behind
+ * the camera or too far away. (One giant mesh can only ever be drawn whole.) Each tile gets its own bounding sphere.
+ */
+export function tileTerrain(geo, tile = 360) {
+  const pos = geo.attributes.position, index = geo.index.array;
+  const tiles = new Map();
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i], b = index[i + 1], c = index[i + 2];
+    const x = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3, z = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
+    const k = `${Math.floor(x / tile)},${Math.floor(z / tile)}`;
+    let t = tiles.get(k);
+    if (!t) tiles.set(k, t = []);
+    t.push(a, b, c);
+  }
+  const out = [];
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  for (const idx of tiles.values()) {
+    const g = new THREE.BufferGeometry();
+    for (const name of Object.keys(geo.attributes)) g.setAttribute(name, geo.attributes[name]); // shared, uploaded once
+    g.setIndex(new THREE.BufferAttribute(pos.count > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), 1));
+    box.makeEmpty();
+    for (const i of idx) box.expandByPoint(v.fromBufferAttribute(pos, i));
+    g.boundingBox = box.clone();
+    g.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
+    out.push(g);
+  }
+  return out;
 }
