@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { crc16, FIT_EPOCH } from '../js/fit.js';
 import { buildFit, projector, PLACES, MIN_SECONDS } from '../js/export.js';
-import { posAt, headingAt, elevation, LOOP } from '../js/course.js';
+import { posAt, headingAt, elevation, gradeAt, LOOP, SPURS, TOTAL, spurAt } from '../js/course.js';
+import { placeOnLoop, advance } from '../js/route.js';
 
 const R = 6371008.8;
 const haversine = (a, b) => {
@@ -106,11 +107,90 @@ test('the bends in the file are the bends of the course', () => {
   }
 });
 
-test('the loop is placed in open sea around the chosen spot', () => {
+test('the whole course (loop, flat road, link and Death Road) is placed in open sea around the chosen spot, and the loop closes', () => {
   const where = projector(PLACES[0]);
-  const p = where(0), q = where(5000);
-  assert.ok(haversine(p, PLACES[0]) < 3000 && haversine(q, PLACES[0]) < 3000);
+  let far = 0;
+  for (let c = 0; c <= TOTAL; c += 50) { if (c > LOOP && SPURS.every((sp) => c < sp.base || c > sp.end)) continue; far = Math.max(far, haversine(where(c), PLACES[0])); }
+  assert.ok(far < 6000, `${far.toFixed(0)} m from the centre at the furthest`);
   assert.ok(haversine(where(LOOP - 1), where(0)) < 2, 'loop closes');
+});
+
+// ---- rides that leave the loop: the file must follow the road ridden, join for join ----------------------------------------
+
+/** One sample a second at `v` m/s along a route: `take(spur)` decides each fork. Returns the samples, as the game records them. */
+function rideRoute(take, v = 8, until = (r) => r.laps >= 1) {
+  const r = placeOnLoop({}, 0);
+  const samples = [];
+  let d = 0;
+  while (!until(r) && samples.length < 12000) {
+    advance(r, v, take);
+    d += v;
+    samples.push({ p: 200, hr: 140, cad: 90, v, d, c: r.c });
+  }
+  return samples;
+}
+const [FLAT, DEATH, LINK] = SPURS;
+const routes = {
+  'the loop': { take: () => false },
+  'the flat road all the way round': { take: (sp) => sp === FLAT },
+  'the flat road, then the link back to the loop': { take: (sp) => sp === FLAT || sp === LINK },
+  'Death Road': { take: (sp) => sp === DEATH },
+};
+
+test('a ride on any route is one continuous path: every second moves you the speed you rode, with no jump at a fork or a rejoin', () => {
+  for (const [name, { take }] of Object.entries(routes)) {
+    const samples = rideRoute(take);
+    const rec = decode(buildFit({ samples, startedAt: ride.startedAt, place: PLACES[0] })).filter((m) => m.global === 20);
+    const pts = rec.map((m) => ({ lat: (m[0] * 180) / 2 ** 31, lon: (m[1] * 180) / 2 ** 31 }));
+    let worst = 0;
+    for (let i = 1; i < pts.length; i++) worst = Math.max(worst, Math.abs(haversine(pts[i - 1], pts[i]) - 8));
+    assert.ok(worst < 0.35, `${name}: a step differs from the speed ridden by ${worst.toFixed(2)} m`);
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) len += haversine(pts[i - 1], pts[i]);
+    const dist = (rec.at(-1)[5] - rec[0][5]) / 100;
+    assert.ok(Math.abs(len - dist) / dist < 0.004, `${name}: route ${len.toFixed(0)} m vs recorded distance ${dist.toFixed(0)} m`);
+    // it starts and ends at the start line
+    assert.ok(haversine(pts[0], projector(PLACES[0])(0)) < 10 && haversine(pts.at(-1), projector(PLACES[0])(0)) < 10, `${name}: starts and finishes at the line`);
+  }
+});
+
+test('altitude and grade in the file are the road ridden, including on the flat road and the link', () => {
+  for (const [name, { take }] of Object.entries(routes)) {
+    const samples = rideRoute(take);
+    const rec = decode(buildFit({ samples, startedAt: ride.startedAt, place: PLACES[0] })).filter((m) => m.global === 20);
+    let worstAlt = 0, jump = 0;
+    rec.forEach((m, i) => {
+      worstAlt = Math.max(worstAlt, Math.abs(m[2] / 5 - 500 - elevation(samples[i].c)));
+      assert.ok(Math.abs(m[9] / 10000 - gradeAt(samples[i].c)) < 2e-4, `${name}: grade at ${i}`);
+      if (i) jump = Math.max(jump, Math.abs(m[2] - rec[i - 1][2]) / 5);
+    });
+    assert.ok(worstAlt < 0.11, `${name}: altitude off by ${worstAlt.toFixed(2)} m`);
+    assert.ok(jump < 1.2, `${name}: altitude jumps ${jump.toFixed(2)} m between seconds (8 m of road)`); // a 10% grade over 8 m is 0.8 m
+  }
+});
+
+test('the bends in the file are the bends of the flat road, the link and Death Road', () => {
+  const where = projector(PLACES[0]);
+  for (const sp of SPURS) {
+    for (let s = 60; s < sp.len - 60; s += 200) {
+      const c = sp.base + s;
+      const a = where(c - 10), b = where(c + 10);
+      const expected = Math.PI / 2 - headingAt(c);
+      const diff = Math.atan2(Math.sin(bearing(a, b) - expected), Math.cos(bearing(a, b) - expected));
+      assert.ok(Math.abs(diff) < 0.06, `${sp.id}: heading ${s} m along: ${diff.toFixed(3)}`);
+    }
+  }
+});
+
+test('the flat road\'s first and last metres sit exactly on the loop, and the link\'s on the flat road and the loop', () => {
+  const where = projector(PLACES[0]);
+  const same = (a, b) => haversine(where(a), where(b)) < 0.2;
+  assert.ok(same(FLAT.base, FLAT.fork), 'the flat road leaves the loop where it says');
+  assert.ok(same(FLAT.end, 0), 'and comes back at the start line');
+  assert.ok(same(LINK.base, LINK.fork), 'the link leaves the flat road where it says');
+  assert.ok(same(LINK.end, LINK.rejoin), 'and joins the loop where it says');
+  assert.ok(same(DEATH.base, DEATH.fork) && same(DEATH.end, 0), 'Death Road, as before');
+  assert.equal(spurAt(LINK.fork), FLAT.index, 'the link forks from the flat road');
 });
 
 test('missing heart rate and cadence are written as invalid, not zero', () => {

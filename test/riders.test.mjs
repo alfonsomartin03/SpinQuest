@@ -21,7 +21,7 @@ globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext:
 const THREE = await import('three');
 const { RiderModel, SKINS, HAIRS } = await import('../js/world/riders.js');
 
-const looks = ['pony', 'short', 'bun'].map((hairStyle, i) => ({ jersey: ['#e63946', '#2ec4b6', '#9b5de5'][i], pattern: ['hoops', 'chevron', 'dots'][i], hairStyle, skin: SKINS[i], hair: HAIRS[i], number: String(10 + i) }));
+const looks = [0, 1, 2].map((i) => ({ jersey: ['#e63946', '#2ec4b6', '#9b5de5'][i], pattern: ['hoops', 'chevron', 'dots'][i], skin: SKINS[i], hair: HAIRS[i], number: String(10 + i) }));
 
 test('every rider builds light: a couple of dozen meshes and a few thousand triangles', () => {
   for (const look of looks) {

@@ -5,7 +5,7 @@
 // distance, elevation and every bend in the file are the ones the rider rode. The file declares itself a virtual
 // activity (not a GPS ride), so platforms file it as a Virtual Ride.
 
-import { posAt, elevation, gradeAt, MAP, LOOP } from './course.js';
+import { posAt, elevation, gradeAt, SPUR_MAP, LOOP } from './course.js';
 import { FitWriter, toFitTime } from './fit.js';
 
 /** The one spot every ride is placed at: open sea, no road within hundreds of kilometres. */
@@ -18,10 +18,10 @@ const DEG = 180 / Math.PI;
 const SEMI = 2 ** 31 / 180; // degrees -> FIT semicircles
 export const MIN_SECONDS = 10; // shorter rides are not worth uploading
 
-/** Maps a course coordinate (see course.js) to a latitude/longitude with the loop centred on `place`. */
+/** Maps a course coordinate (see course.js) to a latitude/longitude with the whole course (loop and every detour) centred on `place`. */
 export function projector(place) {
-  const cx = (MAP.minX + MAP.maxX) / 2;
-  const cy = (MAP.minY + MAP.maxY) / 2;
+  const cx = (SPUR_MAP.minX + SPUR_MAP.maxX) / 2;
+  const cy = (SPUR_MAP.minY + SPUR_MAP.maxY) / 2;
   const kLat = DEG / EARTH_R;
   const kLon = DEG / (EARTH_R * Math.cos(place.lat / DEG));
   return (d) => {

@@ -17,8 +17,9 @@ const ZONE_STYLE = [
   { relief: 0.7, ground: '#2fc468' }, // lake
   { relief: 0.25, ground: '#6ed44e' }, // village
   { relief: 0.22, ground: '#f0c030' }, // fields
-  { relief: 0.18, ground: '#b0dc38' }, // valley road
+  { relief: 0.5, ground: '#a4dc42' }, // the flat road: rolling meadow
   { relief: 2.6, ground: '#7f9a78' }, // death road
+  { relief: 0.55, ground: '#a4dc42' }, // the link back to the loop: rolling meadow
 ].map((z) => ({ relief: z.relief, ground: new THREE.Color(z.ground).toArray() }));
 
 const ROCK = new THREE.Color('#8b8a95').toArray();
@@ -195,7 +196,7 @@ export class TerrainField {
       if (!this.buckets.has(key)) this.buckets.set(key, []);
       this.buckets.get(key).push(i);
     }
-    this.ringBest = new Float64Array(this.rings); this.ringY = new Float64Array(this.rings);
+    this.ringBest = new Float64Array(this.rings); this.ringY = new Float64Array(this.rings); this.ringEnd = new Uint8Array(this.rings);
     this.tmp = {};
     this.near = { dist: 0, s: 0, y: 0, side: 0 };
   }
@@ -244,7 +245,7 @@ export class TerrainField {
   nearest(x, z) {
     const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
     let best = Infinity, bs = 0, by = 0, bside = 0, bring = 0;
-    const ringBest = this.ringBest.fill(Infinity), ringY = this.ringY; // closest point on each road (the loop, then each stretch of each detour)
+    const ringBest = this.ringBest.fill(Infinity), ringY = this.ringY, ringEnd = this.ringEnd; // closest point on each road (the loop, then each stretch of each detour), and whether that is one of its two ends
     for (let r = 1; r <= 2; r++) {
       for (let ox = -r; ox <= r; ox++) {
         for (let oz = -r; oz <= r; oz++) {
@@ -262,7 +263,7 @@ export class TerrainField {
               const px = ax + ex * t, pz = az + ez * t;
               const d2 = (x - px) * (x - px) + (z - pz) * (z - pz);
               const ring = this.ring[a];
-              if (d2 < ringBest[ring]) { ringBest[ring] = d2; ringY[ring] = this.sy[a] + (this.sy[b] - this.sy[a]) * t; }
+              if (d2 < ringBest[ring]) { ringBest[ring] = d2; ringY[ring] = this.sy[a] + (this.sy[b] - this.sy[a]) * t; ringEnd[ring] = a === b || (t === 0 && this.prv[a] === a) || (t === 1 && this.nxt[b] === b) ? 1 : 0; }
               if (d2 < best) {
                 best = d2; bring = ring;
                 bs = this.cs[a] + t * (this.cs[b] - this.cs[a]);
@@ -277,8 +278,9 @@ export class TerrainField {
     }
     if (best === Infinity) return null;
     const o = this.near;
-    // where the two roads overlap (they share a surface there), stay under the lower of them
-    for (let k = 0; k < this.rings; k++) if (k !== bring && ringBest[k] < 10 * 10) by = Math.min(by, ringY[k]);
+    // where the two roads overlap (they share a surface there), stay under the lower of them; the bare end of a road that has not
+    // started yet (or has finished) shares nothing with the ground beside it, so it is left out
+    for (let k = 0; k < this.rings; k++) if (k !== bring && ringBest[k] < 10 * 10 && !ringEnd[k]) by = Math.min(by, ringY[k]);
     o.dist = Math.sqrt(best); o.s = bs; o.y = by; o.side = bside;
     return o;
   }

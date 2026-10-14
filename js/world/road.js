@@ -99,9 +99,12 @@ const wrapLoop = (d) => ((d % LOOP) + LOOP) % LOOP;
 function parted(d, sep) {
   for (const sp of SPURS) {
     let other = null;
+    const parent = sp.parent >= 0 ? SPURS[sp.parent] : null;
     if (d < LOOP) {
-      if (d >= sp.fork && d < sp.fork + JOIN) other = sp.base + (d - sp.fork);
+      if (!parent && d >= sp.fork && d < sp.fork + JOIN) other = sp.base + (d - sp.fork);
       else if (d > sp.rejoin - JOIN && d <= sp.rejoin) other = sp.end - (sp.rejoin - d);
+    } else if (parent && d >= parent.base && d <= parent.end && d >= sp.fork && d < sp.fork + JOIN) {
+      other = sp.base + (d - sp.fork); // a road that leaves another detour: that detour, just past the fork
     } else if (d >= sp.base && d <= sp.end) {
       if (d - sp.base < JOIN) other = sp.fork + (d - sp.base);
       else if (sp.end - d < JOIN) other = sp.rejoin - (sp.end - d);
@@ -196,7 +199,7 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   // of lane markings there and the detour's emerges from underneath as the roads part
   const spurMat = toon({ map, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   for (const sp of SPURS) for (const [a, b] of pieces(sp.base, sp.end)) {
-    const spur = new THREE.Mesh(ribbon(a, b, { y: 0.008 }), spurMat); // a hair lower than the loop, so the two never z-fight where they overlap
+    const spur = new THREE.Mesh(ribbon(a, b, { y: sp.parent >= 0 ? 0.014 : 0.008 }), spurMat); // a hair lower than the loop, so the two never z-fight where they overlap (and a road that leaves another detour sits a hair above it)
     spur.receiveShadow = true;
     spur.userData.far = 3000;
     group.add(spur);

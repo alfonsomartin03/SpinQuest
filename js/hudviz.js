@@ -51,6 +51,10 @@ export function glyph(ctx, kind, x, y, r, found) {
     case 'bridge': ctx.moveTo(-5, 1.5); ctx.lineTo(5, 1.5); ctx.moveTo(-5, 1.5); ctx.quadraticCurveTo(0, -5, 5, 1.5); ctx.stroke(); break;
     case 'lighthouse': ctx.moveTo(-2.2, 4.5); ctx.lineTo(-1.2, -2.6); ctx.lineTo(1.2, -2.6); ctx.lineTo(2.2, 4.5); ctx.closePath(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-3.8, -4.4); ctx.lineTo(-1.6, -3.4); ctx.moveTo(3.8, -4.4); ctx.lineTo(1.6, -3.4); ctx.stroke(); break;
     case 'market': ctx.moveTo(-5, 3.2); ctx.lineTo(0, -3.8); ctx.lineTo(5, 3.2); ctx.closePath(); ctx.stroke(); break;
+    case 'ring': ctx.arc(0, 0, 4.4, 0, 7); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 0, 1.5, 0, 7); ctx.fill(); break;
+    case 'isles': ctx.moveTo(-5, -1); ctx.lineTo(5, -1); ctx.lineTo(1.5, 4.5); ctx.lineTo(-1.5, 4.5); ctx.closePath(); ctx.stroke(); break;
+    case 'crystal': ctx.moveTo(0, -5); ctx.lineTo(3, 0); ctx.lineTo(0, 5); ctx.lineTo(-3, 0); ctx.closePath(); ctx.stroke(); break;
+    case 'fungus': ctx.moveTo(-5, 0.6); ctx.arc(0, 0.6, 5, Math.PI, 0); ctx.closePath(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-1.2, 1); ctx.lineTo(-1.2, 4.6); ctx.lineTo(1.2, 4.6); ctx.lineTo(1.2, 1); ctx.stroke(); break;
     case 'church': ctx.moveTo(0, -5); ctx.lineTo(0, 4.5); ctx.moveTo(-3, -1.8); ctx.lineTo(3, -1.8); ctx.stroke(); break;
     default: ctx.arc(0, 0, 2, 0, 7); ctx.fill();
   }
@@ -348,10 +352,10 @@ export function drawStrip(canvas, game) {
   // km ticks
   ctx.fillStyle = 'rgba(160,176,198,0.7)'; ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center';
   for (let km = 0; km * 1000 <= len; km += len > 12000 ? 4 : 2) ctx.fillText(String(km), X(base + km * 1000), h - 1);
-  // the forks, on the loop's strip
-  if (!spur) {
+  // the forks on the stretch of road this strip shows
+  {
     const next = game.extension().spur;
-    for (const f of SPURS) {
+    for (const f of SPURS.filter((o) => o.parent === (sp ? sp.index : -1))) {
       const x = X(f.fork), armed = game.spurIntent && next === f;
       ctx.strokeStyle = armed ? f.color : `${f.color}b0`; ctx.lineWidth = 1.5; ctx.setLineDash([2, 3]);
       ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, bottom + 2); ctx.stroke(); ctx.setLineDash([]);

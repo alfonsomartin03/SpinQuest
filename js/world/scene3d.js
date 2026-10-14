@@ -12,7 +12,7 @@ import { LOOP, SPURS, TUNNEL, curvatureAt, elevation, spurAt } from '../course.j
 import { courseAt } from '../route.js';
 import { POWER_ZONES, HR_ZONES, clamp } from '../physics.js';
 import { orbAt, ORB_SPACING } from '../game.js';
-import { frame, place, BOUNDS, LOOP_BOUNDS } from './geo.js';
+import { frame, place, snapToLattice, BOUNDS, LOOP_BOUNDS } from './geo.js';
 import { TerrainField, buildTerrainMesh, tileTerrain, makeDetailTexture } from './terrain.js';
 import { buildRoad } from './road.js';
 import { buildTunnel, buildBridge, buildViaducts } from './structures.js';
@@ -50,12 +50,12 @@ function detectQuality(gl) {
 
 // each rider gets their own kit, bike colours, skin tone and hair so the bunch looks like a real group
 const BOT_LOOKS = [
-  { pattern: 'chevron', accent: '#ffffff', accent2: '#ffe45e', frame: '#2a2d36', wheel: '#1d1f26', helmet: '#f4f4f0', helmetStripe: '#ffb703', hairStyle: 'pony', number: '12' },
-  { pattern: 'sash', accent: '#ffffff', accent2: '#ff9f1c', frame: '#1f3a3a', wheel: '#0f1f1f', helmet: '#1b1b1f', helmetStripe: '#2ec4b6', hairStyle: 'short', number: '24' },
-  { pattern: 'split', accent: '#2b2b33', accent2: '#ffffff', frame: '#3a2420', wheel: '#241410', helmet: '#f0f0f0', helmetStripe: '#e76f51', hairStyle: 'bun', number: '31' },
-  { pattern: 'dots', accent: '#f4f1ea', accent2: '#c8f169', frame: '#2a2140', wheel: '#1a1330', helmet: '#2b2342', helmetStripe: '#c8f169', hairStyle: 'short', number: '45' },
-  { pattern: 'fade', accent: '#ffffff', accent2: '#ffffff', frame: '#16313c', wheel: '#0c1b22', helmet: '#e8f7ff', helmetStripe: '#00bbf9', hairStyle: 'pony', number: '58' },
-  { pattern: 'bands', accent: '#2b2b33', accent2: '#ffd1e8', frame: '#3b1f31', wheel: '#240f1d', helmet: '#fff0f7', helmetStripe: '#f15bb5', hairStyle: 'short', number: '66' },
+  { pattern: 'chevron', accent: '#ffffff', accent2: '#ffe45e', frame: '#2a2d36', wheel: '#1d1f26', helmet: '#f4f4f0', helmetStripe: '#ffb703', number: '12' },
+  { pattern: 'sash', accent: '#ffffff', accent2: '#ff9f1c', frame: '#1f3a3a', wheel: '#0f1f1f', helmet: '#1b1b1f', helmetStripe: '#2ec4b6', number: '24' },
+  { pattern: 'split', accent: '#2b2b33', accent2: '#ffffff', frame: '#3a2420', wheel: '#241410', helmet: '#f0f0f0', helmetStripe: '#e76f51', number: '31' },
+  { pattern: 'dots', accent: '#f4f1ea', accent2: '#c8f169', frame: '#2a2140', wheel: '#1a1330', helmet: '#2b2342', helmetStripe: '#c8f169', number: '45' },
+  { pattern: 'fade', accent: '#ffffff', accent2: '#ffffff', frame: '#16313c', wheel: '#0c1b22', helmet: '#e8f7ff', helmetStripe: '#00bbf9', number: '58' },
+  { pattern: 'bands', accent: '#2b2b33', accent2: '#ffd1e8', frame: '#3b1f31', wheel: '#240f1d', helmet: '#fff0f7', helmetStripe: '#f15bb5', number: '66' },
 ];
 
 export class Renderer {
@@ -103,7 +103,7 @@ export class Renderer {
     const loopArea = rect({ x0: LOOP_BOUNDS.minX - 800, z0: LOOP_BOUNDS.minZ - 800, x1: LOOP_BOUNDS.maxX + 800, z1: LOOP_BOUNDS.maxZ + 800 });
     const tmp = {};
     const fineDist = (x, z) => Math.min(loopArea(x, z), this.field.grid(x, z, tmp).dist - FINE_R);
-    const inner = { x0: BOUNDS.minX - FINE_R - 60, z0: BOUNDS.minZ - FINE_R - 60, x1: BOUNDS.maxX + FINE_R + 60, z1: BOUNDS.maxZ + FINE_R + 60 };
+    const inner = { x0: snapToLattice(BOUNDS.minX - FINE_R - 60), z0: snapToLattice(BOUNDS.minZ - FINE_R - 60), x1: BOUNDS.maxX + FINE_R + 60, z1: BOUNDS.maxZ + FINE_R + 60 };
     const innerGeo = await buildTerrainMesh(this.field, { ...inner, cell: 10, cover: fineDist, onProgress: (f) => onProgress(0.06 + f * 0.34, 'Shaping the land') });
     this.terrain = new THREE.Group();
     for (const g of tileTerrain(innerGeo, 520)) { const m = new THREE.Mesh(g, terrainMat); m.receiveShadow = true; this.terrain.add(m); }
@@ -126,8 +126,8 @@ export class Renderer {
     this.water = makeWaterUniforms();
     this.scene.add(buildLake(this.water), buildRiver(this.water));
 
-    await step(0.64, 'Planting forests');
-    this.flora = await buildFlora(this.field, { density: 1, grassDensity: 0.6, onProgress: (f) => onProgress(0.64 + f * 0.26, 'Planting forests') });
+    await step(0.64, 'Growing giants');
+    this.flora = await buildFlora(this.field, { density: 1, grassDensity: 0.05, onProgress: (f) => onProgress(0.64 + f * 0.26, 'Growing giants') });
     this.scene.add(this.flora.group);
 
     await step(0.92, 'Raising landmarks');
@@ -243,14 +243,14 @@ export class Renderer {
 
   /** The look for a rider: yours, the bunch's, the coach's, or a generated one for a remote player. */
   #lookFor(r) {
-    if (r.kind === 'you') return { jersey: '#ff3b6b', accent: '#ffffff', accent2: '#ffd166', pattern: 'hoops', frame: '#f2f3f7', wheel: '#ff3b6b', helmet: '#ffffff', helmetStripe: '#ff3b6b', skin: SKINS[1], hair: HAIRS[1], hairStyle: 'short', number: 'SQ', isUser: true };
-    if (r.kind === 'coach') return { jersey: '#ffd400', accent: '#16181d', accent2: '#ffffff', pattern: 'chevron', frame: '#111318', wheel: '#111318', helmet: '#16181d', helmetStripe: '#ffd400', skin: SKINS[3], hair: HAIRS[4], hairStyle: 'short', number: '★' };
+    if (r.kind === 'you') return { jersey: '#ff3b6b', accent: '#ffffff', accent2: '#ffd166', pattern: 'hoops', frame: '#f2f3f7', wheel: '#ff3b6b', helmet: '#ffffff', helmetStripe: '#ff3b6b', skin: SKINS[1], hair: HAIRS[1], number: 'SQ', isUser: true };
+    if (r.kind === 'coach') return { jersey: '#ffd400', accent: '#16181d', accent2: '#ffffff', pattern: 'chevron', frame: '#111318', wheel: '#111318', helmet: '#16181d', helmetStripe: '#ffd400', skin: SKINS[3], hair: HAIRS[4], number: '★' };
     if (r.kind === 'bot') { const i = r.i ?? 0; return { ...BOT_LOOKS[i % BOT_LOOKS.length], jersey: r.color, skin: SKINS[(i * 2 + 1) % SKINS.length], hair: HAIRS[(i * 3 + 2) % HAIRS.length] }; }
     // remote: stable pseudo-random choices from their id, in the colour they picked
     let h = 7;
     for (const ch of r.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     const base = BOT_LOOKS[h % BOT_LOOKS.length];
-    return { ...base, jersey: r.color, skin: SKINS[h % SKINS.length], hair: HAIRS[(h >> 3) % HAIRS.length], hairStyle: ['pony', 'short', 'bun'][(h >> 5) % 3], number: String(10 + (h % 90)) };
+    return { ...base, jersey: r.color, skin: SKINS[h % SKINS.length], hair: HAIRS[(h >> 3) % HAIRS.length], number: String(10 + (h % 90)) };
   }
 
   #addRider(r) {
@@ -357,7 +357,7 @@ export class Renderer {
     const ph = user.c;
     // time of day follows the stretch of loop you are replacing while you ride around it
     const sp = user.spur ? SPURS[spurAt(ph)] : null;
-    this.sky.setProgress((sp ? sp.fork + ((ph - sp.base) / sp.len) * (sp.rejoin - sp.fork) : ph) / LOOP, um.position);
+    this.sky.setProgress((sp ? sp.roadFrom + ((ph - sp.base) / sp.len) * (sp.roadTo - sp.roadFrom) : ph) / LOOP, um.position);
     this.sky.update(t);
     const st = this.sky.state;
     const inT = ph > TUNNEL.start - 2 && ph < TUNNEL.end + 2 ? 1 : 0;

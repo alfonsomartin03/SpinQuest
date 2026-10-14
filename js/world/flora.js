@@ -1,65 +1,20 @@
-// Vegetation and roadside props. Everything is procedural: low-poly species with vertex colours,
-// scattered along the course by zone, grouped into spatial chunks and drawn as instanced meshes that
-// are culled by distance. Foliage sways in the wind through a small shader patch.
+// Vegetation and scenery. Everything is procedural: a few large trees and boulders, a light dusting of flowers, and the
+// giant surreal objects of giants.js (towering mushrooms, crystals, balloon trees, floating islands...), scattered along the
+// course by zone, grouped into spatial chunks and drawn as instanced meshes that are culled by distance. Foliage sways in the
+// wind through a small shader patch. The world is deliberately sparse in small things: big shapes, lots of room.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LOOP, TOTAL, SPURS, BIOMES, LANDMARKS, TUNNEL, BRIDGE, biomeIndex, spurAt } from '../course.js';
 import { frame, place } from './geo.js';
 import { RIVER, LAKE, lakeR } from './terrain.js';
-import { mulberry32, makeNoise, smoothstep as sm } from './noise.js';
+import { mulberry32, makeNoise, smoothstep as sm, lerp } from './noise.js';
 import { toon } from './toon.js';
+import { C, mixC, paint, xf, blob, merge } from './geomkit.js';
+import { GIANT_KINDS, GIANT_FAMILIES } from './giants.js';
 
 const CHUNK = 200;
 const rngNoise = makeNoise(99);
-
-// ---- geometry helpers ---------------------------------------------------------------------------------
-
-const C = (h) => new THREE.Color(h);
-const mixC = (a, b, t) => a.clone().lerp(b, t);
-
-/** Colour a geometry with a bottom-to-top gradient (with a little per-part tint). */
-function paint(geo, bottom, top, tint = 0) {
-  const g = geo.index ? geo.toNonIndexed() : geo;
-  g.computeBoundingBox();
-  const { min, max } = g.boundingBox;
-  const p = g.attributes.position;
-  const col = new Float32Array(p.count * 3);
-  const k = 1 + tint;
-  for (let i = 0; i < p.count; i++) {
-    const t = max.y > min.y ? (p.getY(i) - min.y) / (max.y - min.y) : 0;
-    const c = mixC(bottom, top, t);
-    col[i * 3] = c.r * k; col[i * 3 + 1] = c.g * k; col[i * 3 + 2] = c.b * k;
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.deleteAttribute('uv');
-  if (!g.attributes.normal) g.computeVertexNormals();
-  return g;
-}
-
-const xf = (geo, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx } = {}) => {
-  const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
-  geo.applyMatrix4(m);
-  return geo;
-};
-
-/** An organic blob: an icosahedron with its vertices pushed around by noise. */
-function blob(radius, detail, amp, seed) {
-  const g = new THREE.IcosahedronGeometry(radius, detail);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const n = 1 + amp * rngNoise.simplex(x * 0.9 + seed, y * 0.9 + z * 0.7 + seed * 1.7);
-    p.setXYZ(i, x * n, y * n * 0.92, z * n);
-  }
-  return g;
-}
-
-const merge = (parts) => {
-  const g = mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)));
-  g.computeBoundingSphere();
-  return g;
-};
 
 // ---- species ------------------------------------------------------------------------------------------
 
@@ -116,14 +71,6 @@ function makeBirch() {
   return merge(parts);
 }
 
-function makeBush() {
-  const parts = [];
-  [[0, 0.75, 0, 1.1], [-0.95, 0.55, 0.3, 0.8]].forEach(([x, y, z, r], i) => {
-    parts.push(paint(xf(blob(r, 1, 0.1, i * 7 + 2), { x, y, z }), C('#12a83f'), C('#6af05a')));
-  });
-  return merge(parts);
-}
-
 function makeRock(snowy) {
   const g = xf(blob(1.3, 1, 0.3, snowy ? 4 : 9), { sx: 1.35, sy: 0.85, sz: 1.1, y: 0.45 }).toNonIndexed();
   const p = g.attributes.position;
@@ -138,18 +85,6 @@ function makeRock(snowy) {
   g.deleteAttribute('uv');
   g.computeVertexNormals();
   return g;
-}
-
-function makeHay() {
-  const g = xf(new THREE.CylinderGeometry(0.95, 0.95, 1.3, 10), { rx: Math.PI / 2, y: 0.95 });
-  return paint(g, C('#c9a345'), C('#e3c566'));
-}
-
-function makeFence() {
-  const parts = [];
-  for (let i = 0; i < 3; i++) parts.push(paint(xf(new THREE.BoxGeometry(0.12, 1.15, 0.12), { x: i * 1.9, y: 0.575 }), C('#6d4d33'), C('#8a6a4a')));
-  for (const y of [0.45, 0.85]) parts.push(paint(xf(new THREE.BoxGeometry(3.9, 0.1, 0.06), { x: 1.9, y }), C('#7d5c40'), C('#9a7a58')));
-  return merge(parts);
 }
 
 function makeLamp() {
@@ -264,18 +199,20 @@ export function windify(material, uTime, strength = 1) {
 
 // ---- the scatter -------------------------------------------------------------------------------------------
 
-// zone tables: density per 3 m slice per side, lateral range and weighted species
+// Zone tables. Trees and boulders: density per 3 m slice per side, lateral range and weighted species. They are few and big.
 const ZONES = [
-  { name: 'meadow', dens: 0.42, lat: [9, 110], sp: [['broadleaf', 6], ['bush', 3], ['rock', 1]] },
-  { name: 'forest', dens: 4.4, lat: [8, 130], sp: [['pine', 74], ['broadleaf', 10], ['birch', 8], ['bush', 5], ['rock', 3]] },
-  { name: 'alpine', dens: 1.4, lat: [8, 150], sp: [['pine', 35], ['rock', 55], ['bush', 10]] },
-  { name: 'descent', dens: 1.7, lat: [8, 110], sp: [['orchard', 40], ['broadleaf', 24], ['pine', 14], ['bush', 16], ['rock', 6]] },
-  { name: 'lake', dens: 0.9, lat: [8, 110], sp: [['birch', 34], ['broadleaf', 22], ['bush', 20], ['rock', 14], ['pine', 10]] },
-  { name: 'village', dens: 0.3, lat: [9, 70], sp: [['broadleaf', 5], ['bush', 4]] },
-  { name: 'fields', dens: 0.35, lat: [10, 120], sp: [['broadleaf', 6], ['bush', 2], ['rock', 1]] },
-  { name: 'flats', dens: 0.28, lat: [12, 160], sp: [['broadleaf', 5], ['bush', 5], ['birch', 2], ['rock', 1]] },
-  { name: 'deathroad', dens: 0.9, lat: [9, 150], sp: [['pine', 28], ['rock', 52], ['bush', 16], ['birch', 4]] },
+  { name: 'meadow', dens: 0.1, lat: [14, 130], sp: [['broadleaf', 6], ['rock', 1]] },
+  { name: 'forest', dens: 1.1, lat: [12, 150], sp: [['pine', 78], ['broadleaf', 10], ['birch', 8], ['rock', 3]] },
+  { name: 'alpine', dens: 0.32, lat: [12, 170], sp: [['pine', 35], ['rock', 65]] },
+  { name: 'descent', dens: 0.42, lat: [12, 120], sp: [['orchard', 44], ['broadleaf', 26], ['pine', 14], ['rock', 6]] },
+  { name: 'lake', dens: 0.24, lat: [12, 120], sp: [['birch', 38], ['broadleaf', 26], ['rock', 14], ['pine', 10]] },
+  { name: 'village', dens: 0.08, lat: [14, 80], sp: [['broadleaf', 5]] },
+  { name: 'fields', dens: 0.08, lat: [14, 130], sp: [['broadleaf', 6], ['rock', 1]] },
+  { name: 'flats', dens: 0.07, lat: [16, 190], sp: [['broadleaf', 5], ['birch', 2]] },
+  { name: 'deathroad', dens: 0.24, lat: [12, 160], sp: [['pine', 28], ['rock', 66], ['birch', 4]] },
+  { name: 'flatlink', dens: 0.07, lat: [16, 190], sp: [['broadleaf', 5], ['birch', 2]] },
 ];
+// A light dusting of ground cover (cards per 2.5 m slice per side, before the density setting): flowers by the road, a little wheat.
 const GRASS = [
   { kind: 'flowers', n: 6, lat: [6.4, 30], alt: 'grass' },
   { kind: 'grass', n: 4, lat: [6.4, 24] },
@@ -286,7 +223,26 @@ const GRASS = [
   { kind: 'wheat', n: 11, lat: [6.4, 80] },
   { kind: 'grass', n: 1.9, lat: [6.4, 26], alt: 'flowers' },
   { kind: 'dry', n: 0.9, lat: [6.4, 14] },
+  { kind: 'flowers', n: 4, lat: [6.4, 26], alt: 'grass' },
 ];
+
+/**
+ * The giants: per zone, the chance of one at each 60 m step along each side of the road, how far off the road they stand
+ * (the nearest ones are a good way back, so the road stays open), and what kind. A bigger step count means a denser sky line.
+ */
+const GIANT_ZONES = [
+  { p: 0.36, lat: [30, 420], sp: [['balloon', 5], ['flower', 6], ['mushroom', 3], ['island', 3], ['planet', 1], ['mesa', 1]] }, // meadow
+  { p: 0.5, lat: [28, 380], sp: [['mushroom', 10], ['spire', 2], ['balloon', 2], ['island', 1]] }, // forest
+  { p: 0.34, lat: [30, 480], sp: [['crystal', 6], ['arch', 2], ['spire', 2], ['island', 3], ['planet', 1]] }, // alpine
+  { p: 0.4, lat: [30, 400], sp: [['balloon', 5], ['flower', 3], ['mushroom', 3], ['island', 2], ['arch', 1]] }, // descent
+  { p: 0.36, lat: [30, 460], sp: [['ring', 2], ['island', 4], ['planet', 2], ['balloon', 3], ['crystal', 1]] }, // lake
+  { p: 0.16, lat: [40, 360], sp: [['balloon', 3], ['flower', 3], ['island', 2]] }, // village
+  { p: 0.36, lat: [30, 440], sp: [['flower', 6], ['mesa', 3], ['balloon', 2], ['planet', 1]] }, // fields
+  { p: 0.5, lat: [32, 560], sp: [['flower', 4], ['balloon', 4], ['mushroom', 3], ['island', 3], ['mesa', 2], ['ring', 2], ['planet', 2], ['spire', 1], ['arch', 1], ['crystal', 1]] }, // the flat road: the widest variety
+  { p: 0.26, lat: [30, 420], sp: [['crystal', 5], ['spire', 4], ['mesa', 3], ['arch', 2]] }, // death road
+  { p: 0.5, lat: [32, 560], sp: [['flower', 4], ['balloon', 4], ['mushroom', 3], ['island', 3], ['mesa', 2], ['ring', 2], ['planet', 2], ['spire', 1], ['arch', 1], ['crystal', 1]] }, // the link
+];
+const GIANT_STEP = 60;
 
 export async function buildFlora(field, { density = 1, grassDensity = 1, onProgress = null } = {}) {
   const group = new THREE.Group();
@@ -304,7 +260,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
   };
 
   // keep clear of landmarks, the tunnel, the bridge and water
-  const clear = LANDMARKS.map((lm) => { const p = place(lm.d, lm.lat); return { x: p.x, z: p.z, r: lm.kind === 'castle' ? 60 : lm.kind === 'windmill' ? 14 : lm.kind === 'lighthouse' ? 12 : lm.kind === 'cabin' ? 14 : lm.kind === 'church' ? 16 : lm.kind === 'market' ? 14 : 0 }; }).filter((c) => c.r);
+  const clear = LANDMARKS.map((lm) => { const p = place(lm.d, lm.lat); return { x: p.x, z: p.z, r: lm.kind === 'castle' ? 60 : lm.kind === 'windmill' ? 14 : lm.kind === 'lighthouse' ? 12 : lm.kind === 'cabin' ? 14 : lm.kind === 'church' ? 16 : lm.kind === 'market' ? 14 : lm.kind === 'fungus' || lm.kind === 'crystal' ? 70 : lm.kind === 'isles' ? 40 : lm.kind === 'ring' ? 36 : 0 }; }).filter((c) => c.r);
   // keep the island between each detour and the loop clear around its sign, and the sides of the road at each rejoin sign
   for (const sp of SPURS) {
     const a = place(sp.fork + 200, 0), b = place(sp.base + 200, 0), e = place(sp.end - 170, 7.5);
@@ -366,11 +322,11 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
         if (sp === 'rock' && slope > 1.6) continue;
         if (sp !== 'rock' && slope > 0.9) continue;
         const ry = rng() * Math.PI * 2;
-        const sc = 0.72 + rng() * 0.75;
+        const sc = 1.1 + rng() * 1.0; // big, bold trees
         // keep every object's whole footprint (and canopy) clear of the road and its shoulder
-        const rockScale = 0.7 + rng() * 1.6;
-        const size = sp === 'rock' ? rockScale : sp === 'bush' ? 0.7 + rng() * 0.8 : sc;
-        const radius = { pine: 3.2, broadleaf: 4.4, orchard: 4.0, birch: 2.4, bush: 1.7, rock: 1.9 }[sp] ?? 3;
+        const rockScale = 2.4 + rng() * 3.4; // boulders, not pebbles
+        const size = sp === 'rock' ? rockScale : sc;
+        const radius = { pine: 3.2, broadleaf: 4.4, orchard: 4.0, birch: 2.4, rock: 1.9 }[sp] ?? 3;
         if (near && near.dist < 6.2 + radius * size) continue;
         if (sp === 'pine') push(snowy ? 'snowpine' : 'pine', x, z, mat(x, h - 0.15, z, ry, sc, sc * (0.9 + rng() * 0.4)));
         else if (sp === 'rock') push(snowy ? 'snowrock' : 'rock', x, z, mat(x, h - 0.25, z, ry, rockScale, 0.6 + rng() * 1.1));
@@ -411,8 +367,8 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
     await yieldNow(0.35 + (s / TOTAL) * 0.3);
   }
   // reeds right on the shoreline
-  for (let i = 0; i < 520; i++) {
-    const a = (i / 520) * Math.PI * 2 + rng() * 0.02;
+  for (let i = 0; i < 150; i++) {
+    const a = (i / 150) * Math.PI * 2 + rng() * 0.02;
     const rr = 1.0 + (rng() - 0.5) * 0.06;
     const la = Math.cos(a) * LAKE.ra * rr, lb = Math.sin(a) * LAKE.rb * rr;
     const x = LAKE.cx + LAKE.tx * la - LAKE.tz * lb, z = LAKE.cz + LAKE.tz * la + LAKE.tx * lb;
@@ -420,7 +376,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
     if (Math.abs(h - LAKE.level) > 1.4) continue;
     const near = field.nearest(x, z);
     if (near && near.dist < 8) continue;
-    for (let k = 0; k < 3; k++) push('reeds', x, z, mat(x + (rng() - 0.5) * 3, h - 0.1, z + (rng() - 0.5) * 3, rng() * 6.28, 1.4 + rng(), 1.2 + rng() * 0.8));
+    for (let k = 0; k < 2; k++) push('reeds', x, z, mat(x + (rng() - 0.5) * 3, h - 0.1, z + (rng() - 0.5) * 3, rng() * 6.28, 1.4 + rng(), 1.2 + rng() * 0.8));
   }
 
   // --- village houses, lamps, fences, hay -------------------------------------------
@@ -445,8 +401,8 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
       if (!houseChunks.has(k)) houseChunks.set(k, []);
       houseChunks.get(k).push(g);
     }
-    // lamp posts
-    if (s % 34 < 17) for (const side of [-1, 1]) {
+    // lamp posts, a few
+    if (s % 102 < 17) for (const side of [-1, 1]) {
       const lat = 6.9;
       const x = f.x + f.rx * lat * side, z = f.z + f.rz * lat * side;
       const h = field.height(x, z);
@@ -454,29 +410,51 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
       push('lamp', x, z, mat(x, h, z, -face, 1));
     }
   }
-  for (const zi of [0, 3, 6, 7]) { // meadow, orchard descent, fields and Valley Road get fences and hay
-    const zn = BIOMES[zi];
-    for (let s = zn.start; s < zn.end; s += 15) {
-      if (rng() > 0.55) continue;
-      const f = frame(s);
-      for (const side of [-1, 1]) {
-        if (rng() < 0.4) continue;
-        const lat = 10.5 + rng() * 2.5;
-        const x = f.x + f.rx * lat * side, z = f.z + f.rz * lat * side;
-        const near = field.nearest(x, z);
-        if (near && near.dist < 9.5) continue;
-        const h = field.height(x, z);
-        if (blocked(x, z, h) || slopeAt(x, z, h) > 0.35) continue;
-        push('fence', x, z, mat(x, h, z, -Math.atan2(f.tz, f.tx), 1));
+  // --- the giants: big, slightly impossible things, well back from the road ------------------------------------
+  const tmpG = {};
+  const roadDist = (x, z) => { const n = field.nearest(x, z); return n ? n.dist : field.grid(x, z, tmpG).dist; };
+  const taken = new Map(); // placed giants by 120 m cell, so they never overlap
+  const free = (x, z, r) => {
+    const cx = Math.floor(x / 120), cz = Math.floor(z / 120);
+    for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) for (const o of taken.get(`${cx + i},${cz + j}`) ?? []) if ((x - o.x) ** 2 + (z - o.z) ** 2 < ((r + o.r) * 0.85 + 6) ** 2) return false;
+    return true;
+  };
+  const pickFamily = (list) => {
+    let pick = rng() * list.reduce((a, [, w]) => a + w, 0);
+    for (const [k, w] of list) if ((pick -= w) <= 0) return k;
+    return list[0][0];
+  };
+  for (let s = 0; s < TOTAL; s += GIANT_STEP) {
+    if (inGap(s) || (s > TUNNEL.start - 20 && s < TUNNEL.end + 20)) continue;
+    const zi = biomeIndex(s), gz = GIANT_ZONES[zi];
+    const f = frame(s);
+    for (const side of [-1, 1]) {
+      if (rng() > gz.p) continue;
+      const fam = pickFamily(gz.sp);
+      const names = GIANT_FAMILIES[fam];
+      const kind = names[Math.floor(rng() * names.length)];
+      const def = GIANT_KINDS[kind];
+      const sc = def.scale[0] + rng() * (def.scale[1] - def.scale[0]);
+      const rad = def.r * sc;
+      const lat = lerp(gz.lat[0], gz.lat[1], Math.pow(rng(), 1.4));
+      const along = (rng() - 0.5) * GIANT_STEP;
+      const x = f.x + f.tx * along + f.rx * lat * side, z = f.z + f.tz * along + f.rz * lat * side;
+      if (roadDist(x, z) < (def.float ? 16 + rad * 0.35 : 24 + rad * 0.95)) continue; // the road stays open; hovering things may lean in
+      let blockedByLandmark = false;
+      for (const c of clear) if ((x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + rad * 0.8) ** 2) { blockedByLandmark = true; break; }
+      if (blockedByLandmark) continue;
+      const h = field.height(x, z);
+      if (!def.float) {
+        if (lakeR(x, z) < 1.25 || riverDist(x, z) < 14 + rad * 0.5 || slopeAt(x, z, h) > 0.55) continue;
+        if (h > 235 && (fam === 'mushroom' || fam === 'balloon' || fam === 'flower')) continue; // too high for the soft things
       }
-      if (zi !== 3 && rng() < 0.5) {
-        const side = rng() < 0.5 ? -1 : 1;
-        const lat = 14 + rng() * 40;
-        const x = f.x + f.rx * lat * side, z = f.z + f.rz * lat * side;
-        const h = field.height(x, z);
-        if (!blocked(x, z, h) && slopeAt(x, z, h) < 0.3) push('hay', x, z, mat(x, h, z, rng() * 6.28, 0.9 + rng() * 0.4));
-      }
+      if (!free(x, z, rad)) continue;
+      const cell = `${Math.floor(x / 120)},${Math.floor(z / 120)}`;
+      if (!taken.has(cell)) taken.set(cell, []);
+      taken.get(cell).push({ x, z, r: rad });
+      push(kind, x, z, mat(x, h - 0.4, z, rng() * Math.PI * 2, sc));
     }
+    await yieldNow(0.65 + (s / TOTAL) * 0.2);
   }
   onProgress?.(0.85);
   await new Promise((r) => setTimeout(r, 0));
@@ -493,13 +471,12 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
     broadleaf: { geo: makeBroadleaf(false), mat: leafy, far: 540, shadow: true },
     orchard: { geo: makeBroadleaf(true), mat: leafy, far: 500, shadow: true },
     birch: { geo: makeBirch(), mat: leafy, far: 500, shadow: true },
-    bush: { geo: makeBush(), mat: leafy, far: 240, shadow: false },
     rock: { geo: makeRock(false), mat: rocky, far: 480, shadow: true },
     snowrock: { geo: makeRock(true), mat: rocky, far: 560, shadow: true },
-    hay: { geo: makeHay(), mat: woody, far: 300, shadow: true },
-    fence: { geo: makeFence(), mat: woody, far: 200, shadow: false },
     lamp: { geo: makeLamp(), mat: woody, far: 300, shadow: false },
   };
+  const giantMat = toon({ vertexColors: true });
+  for (const [k, d] of Object.entries(GIANT_KINDS)) if ([...chunks.keys()].includes(k)) species[k] = { geo: d.make(), mat: giantMat, far: d.far, shadow: false, noThin: true };
   const cardGeo = crossedCards(3);
   const cards = {};
   for (const k of ['grass', 'dry', 'flowers', 'wheat', 'reeds']) {
@@ -530,7 +507,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
       mesh.computeBoundingSphere();
       mesh.computeBoundingBox?.();
       const cx = (ix + 0.5) * CHUNK, cz = (iz + 0.5) * CHUNK;
-      mesh.userData = { cx, cz, far: d.far + CHUNK * 0.75, total: mats.length, shadow: d.shadow };
+      mesh.userData = { cx, cz, far: d.far + CHUNK * 0.75, total: mats.length, shadow: d.shadow, noThin: !!d.noThin };
       mesh.visible = false;
       group.add(mesh);
       all.push(mesh);
@@ -574,7 +551,7 @@ export async function buildFlora(field, { density = 1, grassDensity = 1, onProgr
         m.visible = d < far;
         if (!m.visible) continue;
         // thin out the distance: the nearest 40% is drawn in full, then fewer and fewer instances (the chunk is shuffled)
-        if (m.isInstancedMesh && u.total) m.count = Math.max(1, Math.ceil(u.total * Math.min(1, Math.max(0.2, 1.45 - (d / far) * 1.1))));
+        if (m.isInstancedMesh && u.total && !u.noThin) m.count = Math.max(1, Math.ceil(u.total * Math.min(1, Math.max(0.2, 1.45 - (d / far) * 1.1))));
         // only what is near the camera is worth drawing into the shadow map a second time
         if (u.shadow) m.castShadow = d < 85;
       }

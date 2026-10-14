@@ -60,6 +60,12 @@ export function place(d, lat = 0, up = 0, out = {}) {
   return out;
 }
 
+/**
+ * Snap a coordinate to the 10 m lattice the fine terrain mesh is built on, half a cell in. The lattice belongs to the world, not
+ * to the course's bounding box, so adding or moving a road never shifts the mesh under the roads that were already there.
+ */
+export const snapToLattice = (v, cell = 10) => Math.floor(v / cell) * cell + cell / 2;
+
 // bounding box of the loop (and of the whole course, with the extension) in world space
 const boxOf = (tables) => {
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;

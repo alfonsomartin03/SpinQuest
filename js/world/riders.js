@@ -1,6 +1,6 @@
-// A rigged cartoon cyclist on a slick aero race bike. The proportions are human, the look is arcade: cel-shaded, bold
-// colours, a patterned jersey with the race number printed on the back, bib shorts, socks, gloves, a vented helmet and
-// mirrored sunglasses. Legs and arms follow the real pedal position through two-bone IK.
+// A rigged cartoon monkey on a slick aero race bike. The proportions are human, the look is arcade: cel-shaded, bold
+// colours, furry limbs, a pale heart-shaped face with a muzzle, round ears and a curling tail, plus a patterned jersey with
+// the race number printed on the back, bib shorts, socks, gloves, a vented helmet and mirrored sunglasses. Legs and arms follow the real pedal position through two-bone IK.
 //
 // Built to be cheap: each rider is about two dozen meshes and a few thousand triangles. Limbs are single lathes whose
 // vertex colours carry the shorts / skin / sock split, the head is one merged mesh, and the bike keeps only the parts you
@@ -169,8 +169,10 @@ function kitTexture(pattern, c1, c2, number, hot) {
 
 // ---- looks ------------------------------------------------------------------------------------------------------
 
-export const SKINS = ['#f2c9a6', '#e3ad86', '#c98d63', '#9c6a44', '#6f4a32', '#ffdcb8'];
-export const HAIRS = ['#1f1710', '#4a3220', '#c79b4c', '#a8452a', '#171717', '#8d8d92', '#e3c067'];
+// Fur colours (named SKINS / HAIRS for the look options): the body fur, and a second tone for the crown tuft and tail tip.
+export const SKINS = ['#8a5a3b', '#a9754a', '#6f4a32', '#c08a56', '#5a3b28', '#7d6a58'];
+export const HAIRS = ['#3b2a1c', '#5a3b28', '#d9b26a', '#7a4a2a', '#2b2b2b', '#8d8d92', '#b98a4e'];
+const FACE = '#f0cfae'; // bare skin of the face, ears and muzzle
 
 // How the rider sits: the saddle top is at SADDLE_Y + 0.023; the pelvis is sized so its underside just rests on it.
 const SADDLE_Y = 0.972;
@@ -210,15 +212,16 @@ function decal(a, b, z, w, color) {
 const ball = (r, color, o = {}, w = 10, h = 7) => bake(new THREE.SphereGeometry(1, w, h), color, { sx: r, sy: r, sz: r, ...o });
 
 /**
- * Look options: jersey, accent, accent2, pattern, bib, frame, wheel, helmet, helmetStripe, skin, hair,
- * hairStyle ('short' | 'pony' | 'bun'), sock, shoe, number, isUser.
+ * Look options: jersey, accent, accent2, pattern, bib, frame, wheel, helmet, helmetStripe, skin (fur), hair (crown and
+ * tail tip), face (bare face skin; defaults to a pale tint of the fur), sock, shoe, number, isUser.
  */
 export class RiderModel {
   constructor(look = {}) {
     const L = {
       jersey: '#e63946', accent: '#ffffff', accent2: '#ffd166', pattern: 'hoops', bib: '#2a2f45', frame: '#2a2d36', wheel: '#17191f',
-      helmet: '#f2f2f2', helmetStripe: '#e63946', skin: SKINS[0], hair: HAIRS[1], hairStyle: 'short', sock: '#ffffff', shoe: '#f4f4f4', number: '7', isUser: false, ...look,
+      helmet: '#f2f2f2', helmetStripe: '#e63946', skin: SKINS[0], hair: HAIRS[1], face: null, sock: '#ffffff', shoe: '#f4f4f4', number: '7', isUser: false, ...look,
     };
+    L.face ??= C(L.skin).lerp(C(FACE), 0.75).getStyle();
     this.look = L;
     this.group = new THREE.Group();
     this.bike = new THREE.Group();
@@ -287,27 +290,33 @@ export class RiderModel {
       bake(new THREE.SphereGeometry(1, 10, 4, -Math.PI * 0.62, Math.PI * 1.24, Math.PI * 0.46, Math.PI * 0.3).scale(0.103, 0.117, 0.086), L.hair, { x: -0.012, y: -0.004 }),
     ];
     for (const z of [-0.055, 0, 0.055]) headParts.push(bake(new THREE.BoxGeometry(0.1, 0.012, 0.016), '#2a2f44', { x: -0.025, y: 0.145 - Math.abs(z) * 0.25, z }));
-    if (L.hairStyle === 'bun') headParts.push(ball(0.052, L.hair, { x: -0.14, y: -0.02 }, 8, 6));
+    // monkey face: a pale heart-shaped patch, a protruding muzzle, and big round ears poking out under the helmet rim
+    headParts.push(
+      ball(1, L.face, { sx: 0.078, sy: 0.08, sz: 0.072, x: 0.03, y: -0.012 }, 9, 6),
+      ball(1, L.face, { sx: 0.056, sy: 0.044, sz: 0.064, x: 0.082, y: -0.048 }, 8, 6),
+    );
+    for (const z of [-1, 1]) {
+      headParts.push(
+        ball(1, L.skin, { sx: 0.04, sy: 0.05, sz: 0.026, x: -0.012, y: -0.03, z: z * 0.108 }, 7, 5),
+        ball(1, L.face, { sx: 0.028, sy: 0.036, sz: 0.022, x: -0.006, y: -0.03, z: z * 0.12 }, 6, 4),
+      );
+    }
     this.head = mesh(mergeGeometries(headParts), vmat, this.headGroup);
     const face = mergeGeometries([
-      bake(new THREE.CapsuleGeometry(0.014, 0.03, 2, 5), L.skin, { x: 0.1, y: -0.018, rz: -0.35 }),
-      ball(1, L.skin, { sx: 0.024, sy: 0.019, sz: 0.026, x: 0.064, y: -0.094 }, 7, 5),
-      ball(1, L.skin, { sx: 0.014, sy: 0.026, sz: 0.01, x: -0.005, y: -0.012, z: -0.082 }, 6, 5),
-      ball(1, L.skin, { sx: 0.014, sy: 0.026, sz: 0.01, x: -0.005, y: -0.012, z: 0.082 }, 6, 5),
+      ball(1, '#3a2a24', { sx: 0.007, sy: 0.007, sz: 0.007, x: 0.134, y: -0.032, z: -0.014 }, 5, 4), // nostrils
+      ball(1, '#3a2a24', { sx: 0.007, sy: 0.007, sz: 0.007, x: 0.134, y: -0.032, z: 0.014 }, 5, 4),
+      bake(new THREE.BoxGeometry(0.006, 0.005, 0.05), '#6b3d34', { x: 0.132, y: -0.062 }), // grin
       bake(new THREE.SphereGeometry(1, 14, 4, Math.PI - 1.0, 2.0, 1.1, 0.58).scale(0.108, 0.117, 0.089), '#232b3d'), // the mirrored wraparound lens
       bake(new THREE.BoxGeometry(0.012, 0.014, 0.02), L.accent2, { x: 0.1 }),
     ]);
     this.headGroup.add(detail(new THREE.Mesh(face, toon({ vertexColors: true, side: THREE.DoubleSide }))));
-    // hair: a short nape is part of the head mesh; a ponytail swings on its own
-    this.hair = null;
-    if (L.hairStyle === 'pony') {
-      this.hair = new THREE.Group();
-      this.hair.position.set(-0.16, 0.0, 0);
-      const tail = new THREE.Mesh(bake(new THREE.CapsuleGeometry(0.03, 0.22, 3, 6), L.hair, { x: -0.035, y: -0.11, rz: 0.3 }), vmat);
-      tail.castShadow = true;
-      this.hair.add(tail);
-      this.headGroup.add(this.hair);
-    }
+    // crown tuft under the helmet is part of the head mesh; the tail is its own piece that swings from the hips
+    const tailCurve = new THREE.CatmullRomCurve3([V(-0.1, -0.03, 0), V(-0.22, -0.04, 0), V(-0.33, 0.03, 0), V(-0.37, 0.15, 0), V(-0.32, 0.26, 0), V(-0.23, 0.28, 0)]);
+    const tail = mergeGeometries([
+      bake(new THREE.TubeGeometry(tailCurve, 9, 0.02, 5), L.skin),
+      ball(0.026, L.hair, { x: -0.23, y: 0.28 }, 7, 5),
+    ]);
+    this.tail = mesh(tail);
 
     this.tmp = {
       hip: [V(), V()], ankle: [V(), V()], knee: [V(), V()], sh: [V(), V()], hand: [V(), V()], elbow: [V(), V()], pedal: [V(), V()],
@@ -535,7 +544,9 @@ export class RiderModel {
     this.headGroup.rotation.z = 0.26 - 0.16 * st + Math.sin(crank) * 0.015;
     t.neckBase.set(t.shoulderC.x + 0.02, t.shoulderC.y + 0.02, t.shoulderC.z);
     span(this.neck, t.neckBase, t.head);
-    if (this.hair) this.hair.rotation.z = Math.sin(this.time * 7 + crank) * 0.22 + 0.15 + st * 0.3;
+    this.tail.position.set(hipX - 0.006, hipY + 0.012, sway2);
+    this.tail.rotation.z = Math.sin(this.time * 4 + crank * 0.5) * 0.1 + 0.05 + st * 0.2;
+    this.tail.rotation.y = Math.sin(this.time * 2.3) * 0.12;
   }
 }
 

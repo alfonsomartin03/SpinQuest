@@ -4,7 +4,7 @@ import {
   speedFromPower, gradeAt, elevation, START, SEGMENTS, LOOP,
   powerZone, hrZone, levelFor, clamp,
 } from './physics.js';
-import { LANDMARKS, BIOMES, SPURS, TOTAL, biomeIndex, spurAt } from './course.js';
+import { LANDMARKS, BIOMES, SPURS, FORKS, TOTAL, biomeIndex, spurAt } from './course.js';
 import { placeOnLoop, advance, courseAt, gapBetween, roadX, sameStretch } from './route.js';
 import { workoutAt, totalDuration } from './workouts.js';
 import { RemoteRider, sanitizeState } from './net.js';
@@ -241,7 +241,7 @@ export class Game {
       this.#sfx('segment');
     } else if (ev === 'pass') {
       this.spurIntent = false;
-      this.#toast(sp.passText.title, sp.passText.sub, 'info');
+      if (sp.passText) this.#toast(sp.passText.title, sp.passText.sub, 'info');
     } else if (ev === 'exit') {
       this.spurDone++;
       this.spursDone[sp.id] = (this.spursDone[sp.id] ?? 0) + 1;
@@ -258,9 +258,12 @@ export class Game {
     const u = this.user;
     if (u.spur) {
       const sp = SPURS[spurAt(u.c)];
+      // a fork on this road (the flat road's link back to the loop) is announced like any other
+      const next = sp.children.map((i) => SPURS[i]).find((o) => o.fork > u.c) ?? null;
+      if (next && next.fork - u.c <= TURN_RANGE) return { state: 'approach', spur: next, toTurn: next.fork - u.c, armed: this.spurIntent, length: next.len, from: sp };
       return { state: 'on', spur: sp, done: u.c - sp.base, left: sp.end - u.c, length: sp.len, armed: false };
     }
-    const sp = SPURS.find((s) => s.fork > u.c) ?? null; // none left this lap: the start line is next
+    const sp = FORKS.find((s) => s.fork > u.c) ?? null; // none left this lap: the start line is next
     const toTurn = sp ? sp.fork - u.c : Infinity;
     return { state: toTurn <= TURN_RANGE ? 'approach' : 'far', spur: sp, toTurn, armed: this.spurIntent, length: sp?.len ?? 0 };
   }

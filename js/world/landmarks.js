@@ -3,11 +3,12 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { SPURS, LANDMARKS, SEGMENTS, elevation } from '../course.js';
+import { SPURS, LANDMARKS, SEGMENTS, FLAT_NAME, elevation } from '../course.js';
 import { frame, place } from './geo.js';
 import { LAKE, lakeR } from './terrain.js';
 import { makeSign, makeStone, makeRoofTiles, makeWood } from './textures.js';
 import { mulberry32, hash1 } from './noise.js';
+import { LANDMARK_GIANTS } from './giants.js';
 
 const C = (h) => new THREE.Color(h);
 const mats = new Map();
@@ -16,6 +17,7 @@ function mat(color, { rough = 0.8, metal = 0, emissive = null, flat = false } = 
   if (!mats.has(k)) mats.set(k, new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, emissive: emissive || '#000', emissiveIntensity: emissive ? 1 : 0, flatShading: flat }));
   return mats.get(k);
 }
+const giantMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }); // (turned into a toon material with the rest of the scene)
 const basic = (color, k = 1) => new THREE.MeshBasicMaterial({ color: C(color).multiplyScalar(k), toneMapped: false });
 
 function add(group, geo, material, x = 0, y = 0, z = 0, { rx = 0, ry = 0, rz = 0, shadow = true } = {}) {
@@ -462,6 +464,18 @@ export function buildLandmarks(field) {
   };
 
   for (const lm of LANDMARKS) {
+    if (LANDMARK_GIANTS[lm.kind]) { // the big surprises on the flat road: a handful of giants standing together
+      const set = new THREE.Group();
+      for (const { geo, x, z, s } of LANDMARK_GIANTS[lm.kind]()) {
+        const m = new THREE.Mesh(geo, giantMat);
+        m.position.set(x, 0, z); m.scale.setScalar(s);
+        m.castShadow = lm.kind !== 'isles';
+        set.add(m);
+      }
+      set.userData.big = true;
+      placeObj(set, lm.d, lm.lat, lm.kind === 'ring' ? { yawFrom: 'along' } : {});
+      continue;
+    }
     if (lm.kind === 'windmill') placeObj(windmill(anim), lm.d, lm.lat);
     if (lm.kind === 'castle') {
       const c = placeObj(castle(), lm.d, lm.lat);
@@ -533,10 +547,17 @@ export function buildLandmarks(field) {
   // kilometre markers
   for (let k = 1; k < 10; k++) placeObj(kmSign(k), k * 1000, 8.4);
   // the fork at the foot of the climb, and the road around's own kilometre markers
-  const forkSigns = { valley: 'FORK  ·  UP THE COL OR AROUND', death: 'FORK  ·  FINISH OR DEATH ROAD' };
+  const FLAT = FLAT_NAME.toUpperCase();
+  const forkSigns = { valley: 'FORK  ·  UP THE COL OR AROUND', death: 'FORK  ·  FINISH OR DEATH ROAD', link: 'FORK  ·  FLAT ROAD OR BACK TO THE LOOP' };
   const goreSigns = {
-    valley: ['VALLEY ROAD  ↱', `${(SPURS[0].len / 1000).toFixed(1)} km flat · skips the climb`],
+    valley: [`${FLAT}  ↱`, `${(SPURS[0].len / 1000).toFixed(1)} km flat · all the way round`],
     death: ['DEATH ROAD  ↱', `${(SPURS[1].climb / 1000).toFixed(1)} km steep climb`],
+    link: ['BACK TO THE LOOP  ↰', `${(SPURS[2].len / 1000).toFixed(1)} km · then Death Road`],
+  };
+  const mergeSigns = {
+    valley: ['BACK ON THE LOOP', 'START / FINISH ahead'],
+    death: ['BACK ON THE LOOP', 'START / FINISH ahead'],
+    link: ['BACK ON THE LOOP', 'merge ahead'],
   };
   for (const sp of SPURS) {
     placeObj(gantry(forkSigns[sp.id], sp.color, { bunting: false, height: 6.8, width: 7.4 }), sp.fork - 130, 0, { yawFrom: 'along' });
@@ -551,7 +572,7 @@ export function buildLandmarks(field) {
     group.add(sign);
     // ... and one at the rejoin, telling the detour's riders where they are heading
     const e = place(sp.end - 170, 7.5), fe = frame(sp.end - 170);
-    const merge = goreSign('BACK ON THE LOOP', sp.id === 'death' ? 'START / FINISH ahead' : 'merge ahead', sp.color);
+    const merge = goreSign(mergeSigns[sp.id][0], mergeSigns[sp.id][1], sp.color);
     merge.position.set(e.x, field.height(e.x, e.z), e.z);
     merge.rotation.y = -Math.atan2(fe.tz, fe.tx);
     group.add(merge);
@@ -572,7 +593,7 @@ export function buildLandmarks(field) {
   const entries = placed.map((obj) => {
     const meshes = [];
     obj.traverse((m) => { if (m.isMesh && m.castShadow) meshes.push(m); });
-    return { obj, meshes, near: true, far: obj === group.userData.castle ? 2400 : 1200 };
+    return { obj, meshes, near: true, far: obj === group.userData.castle || obj.userData.big ? 2400 : 1200 };
   });
   group.userData.update = (t, cam) => {
     for (const e of entries) {

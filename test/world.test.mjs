@@ -23,9 +23,12 @@ const course = await import('../js/course.js');
 // At the fork and the rejoin two roads share a few hundred metres at slightly different stations, so the ground between them
 // cannot match both to the centimetre; everywhere else the tolerances are strict.
 const nearTurn = (d) => {
-  if (d >= course.LOOP) { const sp = course.SPURS[course.spurAt(d)]; return d - sp.base < 450 || sp.end - d < 450; }
+  if (d >= course.LOOP) {
+    const sp = course.SPURS[course.spurAt(d)];
+    return d - sp.base < 450 || sp.end - d < 450 || course.SPURS.some((o) => o.parent === sp.index && Math.abs(d - o.fork) < 450); // (the flat road is also shared with the link, either side of its fork)
+  }
   const apart = (a, b) => { const x = Math.abs(a - b) % course.LOOP; return Math.min(x, course.LOOP - x); }; // distance round the loop
-  return course.SPURS.some((sp) => apart(d, sp.fork) < 450 || apart(d, sp.rejoin) < 450);
+  return course.SPURS.some((sp) => (sp.parent < 0 && apart(d, sp.fork) < 450) || apart(d, sp.rejoin % course.LOOP) < 450);
 };
 
 const field = new TerrainField();
@@ -61,13 +64,24 @@ test('each detour leaves the loop at its fork and rejoins it, with the same posi
   }
 });
 
-test('Valley Road is mostly flat; both detours stay well clear of the loop away from their ends', () => {
-  const [valley, death] = course.SPURS;
-  let steep = 0, n = 0;
-  for (let s = 600; s <= valley.len - 600; s += 10) { n++; if (Math.abs(course.gradeAt(valley.base + s)) > 0.03) steep++; } // beyond the ends, where it takes the loop's own profile
-  assert.ok(steep / n < 0.03, `${steep} of ${n} samples steeper than 3%`);
-  assert.ok(valley.len > 8000 && valley.len < 12000, `${valley.len} m`);
-  for (const sp of course.SPURS) {
+test('the flat road is flat and flowing, a long way round; every detour stays well clear of the loop away from its ends', () => {
+  const [valley, death, link] = course.SPURS;
+  let steep = 0, up = 0, down = 0, n = 0, bendy = 0;
+  const mean = (course.elevation(valley.base + valley.len - 600) - course.elevation(valley.base + 600)) / (valley.len - 1200); // the road's overall slope
+  for (let s = 600; s <= valley.len - 600; s += 10) { // beyond the ends, where it takes the loop's own profile
+    n++;
+    const g = course.gradeAt(valley.base + s);
+    if (Math.abs(g) > 0.04) steep++;
+    if (g > mean + 0.008) up++; // rolling: stretches that rise, and stretches that fall, either side of the overall slope
+    if (g < mean - 0.008) down++;
+    if (Math.abs(course.curvatureAt(valley.base + s)) > 0.0045) bendy++;
+  }
+  assert.ok(steep / n < 0.01, `${steep} of ${n} samples steeper than 4%`);
+  assert.ok(up / n > 0.12 && down / n > 0.12, `it rolls: ${up} of ${n} rising, ${down} falling`);
+  assert.ok(bendy / n < 0.04, `${bendy} of ${n} samples bend sharper than a 220 m radius`);
+  assert.ok(valley.len > 15000 && valley.len < 20000, `${valley.len} m`);
+  assert.ok(link.len > 800 && link.len < 3000, `${link.len} m`);
+  for (const sp of [valley, death]) {
     let near = Infinity;
     for (let s = 1000; s <= sp.len - 1000; s += 25) {
       const p = geo.frame(sp.base + s);
@@ -75,6 +89,13 @@ test('Valley Road is mostly flat; both detours stay well clear of the loop away 
     }
     assert.ok(near > (sp.id === 'death' ? 200 : 300), `${sp.id} comes within ${near.toFixed(0)} m of the loop`);
   }
+  // the flat road runs beside Death Road's descent only in the last stretch, and never crosses it
+  let nearD = Infinity;
+  for (let s = 0; s <= valley.len - 1800; s += 25) {
+    const p = geo.frame(valley.base + s);
+    for (let q = 0; q <= death.len; q += 25) { const d = geo.frame(death.base + q); nearD = Math.min(nearD, Math.hypot(p.x - d.x, p.z - d.z)); }
+  }
+  assert.ok(nearD > 400, `the flat road comes within ${nearD.toFixed(0)} m of Death Road before its last 1.8 km`);
   assert.ok(death.len > 13000 && death.len < 16000, `${death.len} m`);
 });
 
@@ -125,7 +146,7 @@ test('mountains rise well above the road far from it', () => {
 test('the drawn terrain mesh (a coarse 10 m grid) never rises above the road surface', () => {
   // mirrors how scene3d builds the inner mesh: 10 m cells, triangles (a,c,b) and (b,c,d)
   const CELL = 10;
-  const x0 = geo.BOUNDS.minX - 560, z0 = geo.BOUNDS.minZ - 560; // FINE_R + 60, as in scene3d
+  const x0 = geo.snapToLattice(geo.BOUNDS.minX - 560), z0 = geo.snapToLattice(geo.BOUNDS.minZ - 560); // FINE_R + 60, snapped, as in scene3d
   const cache = new Map();
   const H = (ix, iz) => { const k = ix * 100000 + iz; if (!cache.has(k)) cache.set(k, field.height(x0 + ix * CELL, z0 + iz * CELL)); return cache.get(k); };
   const meshY = (x, z) => {

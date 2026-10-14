@@ -1,5 +1,6 @@
-// Where a rider is on the course. The loop has two forks (see SPURS in course.js): Valley Road leaves it at the foot of
-// the climb and rejoins after the descent; Death Road leaves it late in the lap and comes back onto it at the start line.
+// Where a rider is on the course. The loop has two forks (see SPURS in course.js): the flat road (Meadow Mile) leaves it at the
+// foot of the climb and goes right round the map to the start line, with one fork of its own, a short link back onto the loop
+// after the descent; Death Road leaves the loop late in the lap and comes back onto it at the start line too.
 // Every rider carries
 //   c      the course coordinate (see course.js): [0, LOOP) on the loop, a detour's own range while on it
 //   spur   true while on a detour (which one is spurAt(c))
@@ -8,7 +9,7 @@
 //   lastSpur  which detour that was about
 // `x` (the odometer) keeps counting every metre ridden; `c` is where those metres actually are.
 
-import { LOOP, SPURS, spurAt } from './course.js';
+import { LOOP, SPURS, FORKS, spurAt } from './course.js';
 
 const wrap = (d) => ((d % LOOP) + LOOP) % LOOP;
 
@@ -24,7 +25,7 @@ export function placeOnLoop(r, x) {
 }
 
 /** The first fork strictly ahead of loop position c, or null if the start line comes first. */
-const nextFork = (c) => SPURS.find((s) => s.fork > c) ?? null;
+const nextFork = (c) => FORKS.find((s) => s.fork > c) ?? null;
 
 /**
  * Move a rider dx >= 0 metres along the road. `take(spur)` is asked each time they reach a fork and says whether to ride
@@ -37,13 +38,21 @@ export function advance(r, dx, take = () => false) {
   for (let guard = 0; left > 0 && guard < 12; guard++) {
     if (r.spur) {
       const sp = SPURS[spurAt(r.c)];
-      const toEnd = sp.end - r.c;
-      if (left < toEnd) { r.c += left; left = 0; } else {
-        left -= toEnd; r.spur = false;
-        r.c = sp.rejoin;
-        if (r.c >= LOOP) { r.c -= LOOP; r.laps++; events.push('exit', 'lap'); } else events.push('exit');
-        r.last = 'exit'; r.lastSpur = sp.index; r.since = left;
+      const child = sp.children.map((i) => SPURS[i]).find((o) => o.fork > r.c) ?? null; // a fork on this road, still ahead
+      const stop = child ? child.fork : sp.end;
+      if (left < stop - r.c) { r.c += left; left = 0; continue; }
+      left -= stop - r.c;
+      if (child) {
+        r.c = child.fork;
+        const kind = take(child) ? 'enter' : 'pass';
+        if (kind === 'enter') r.c = child.base;
+        events.push(kind); r.last = kind; r.lastSpur = child.index; r.since = left;
+        continue;
       }
+      r.spur = false;
+      r.c = sp.rejoin;
+      if (r.c >= LOOP) { r.c -= LOOP; r.laps++; events.push('exit', 'lap'); } else events.push('exit');
+      r.last = 'exit'; r.lastSpur = sp.index; r.since = left;
       continue;
     }
     const fork = nextFork(r.c);
@@ -81,8 +90,9 @@ export function courseAt(r, delta, intent = false) {
   }
   const rem = back - r.since;
   const sp = SPURS[r.lastSpur];
-  // before the fork you were on the loop; before the rejoin, still on the detour
-  return r.last === 'exit' ? Math.max(sp.base, sp.end - rem) : wrap(sp.fork - rem);
+  // before the fork you were on the road it leaves (the loop, or another detour); before the rejoin, still on the detour
+  if (r.last === 'exit') return Math.max(sp.base, sp.end - rem);
+  return sp.parent >= 0 ? Math.max(SPURS[sp.parent].base, sp.fork - rem) : wrap(sp.fork - rem);
 }
 
 /**
@@ -92,7 +102,7 @@ export function courseAt(r, delta, intent = false) {
 export const roadX = (r) => {
   if (!r.spur) return r.laps * LOOP + r.c;
   const sp = SPURS[spurAt(r.c)];
-  return r.laps * LOOP + sp.fork + ((r.c - sp.base) / sp.len) * (sp.rejoin - sp.fork);
+  return r.laps * LOOP + sp.roadFrom + ((r.c - sp.base) / sp.len) * (sp.roadTo - sp.roadFrom);
 };
 
 /**
@@ -110,6 +120,13 @@ function endsMeet(r) {
 
 /** Whether two riders are on the same stretch of road (the loop, or the same detour), counting each fork and rejoin as both. */
 export function sameStretch(a, b) {
-  if (a.spur === b.spur) return !a.spur || spurAt(a.c) === spurAt(b.c) || endsMeet(a) || endsMeet(b);
-  return endsMeet(a.spur ? a : b);
+  if (a.spur === b.spur) return !a.spur || spurAt(a.c) === spurAt(b.c) || endsMeet(a) || endsMeet(b) || kin(a, b);
+  return a.spur ? endsMeet(a) : endsMeet(b);
+}
+
+/** Two riders on different detours where one leaves the other, close to the fork. */
+function kin(a, b) {
+  const sa = SPURS[spurAt(a.c)], sb = SPURS[spurAt(b.c)];
+  const [child, , cr, pr] = sa.parent === sb.index ? [sa, sb, a, b] : sb.parent === sa.index ? [sb, sa, b, a] : [];
+  return !!child && cr.c - child.base < 20 && Math.abs(pr.c - child.fork) < 20;
 }

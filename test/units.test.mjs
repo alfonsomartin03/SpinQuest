@@ -299,14 +299,16 @@ test('climb statistics: distance, elevation and grade left', () => {
   assert.equal(climbStats(c, c.end + 50).state, 'done');
 });
 
-test('the climb panel appears 450 m before the climb and leaves at the top', () => {
+test('the climb panel appears 450 m before the climb and leaves at the top', async () => {
   const c = CLIMBS[0];
   assert.equal(activeClimb(c.start - 500), null);
   assert.equal(activeClimb(c.start - 400).stats.state, 'before');
   assert.equal(activeClimb(c.start + 1000).climb.id, c.id);
   assert.equal(activeClimb(c.end + 10), null);
-  assert.ok(activeClimb(c.start + 1000 + 4 * LOOP).climb, 'works on later laps');
+  assert.ok(activeClimb(c.start + 1000 + Math.ceil(TOTAL / LOOP) * LOOP).climb, 'works on later laps');
   assert.equal(activeClimb(LOOP + 500), null, 'no climb on the extension');
+  const { SPURS } = await import('../js/course.js');
+  assert.equal(activeClimb(SPURS[0].end - 50), null, 'the end of the flat road is not the start of Death Road');
 });
 
 const rstate = (over = {}) => ({ v: PROTOCOL_VERSION, id: 'p1', name: 'Sam', color: '#4cc9f0', t: 1000, x: 100, lat: 0, speed: 10, power: 250, cad: 90, hr: 150, weight: 70, ftp: 250, ...over });
