@@ -89,32 +89,67 @@ const box = (w, h, d, x, y, z, color) => {
   return g;
 };
 
-// Where a detour leaves or rejoins the loop the two roads overlap for a while, and the loop's surface is drawn over the detour's.
-// Anything that stands beside the road (neon rails, posts, boards) is held back until the roads have parted, or it would
-// cut across the other road's lanes.
-const JOIN = 400; // how far from the fork or rejoin the roads can still overlap
+// Where one road leaves or joins another (a fork, a rejoin, or Death Road and the flat road merging before the line) the two
+// overlap for a while. An intersection has one set of lines: the road that carries on keeps its markings, the one that is
+// still running in or out of it is plain tarmac until the two have parted, and nothing that stands beside a road (neon rails,
+// posts, boards, kerbs) is put where it would cut across the other road's lanes.
+const JOIN = 400; // how far from a fork or rejoin two roads can still overlap
+const MERGE_ZONE = 1300; // ... and how far from the end a road that merges into another can still be near it
 const _fa = {}, _fb = {};
 const wrapLoop = (d) => ((d % LOOP) + LOOP) % LOOP;
-/** True when the road at course distance d is at least `sep` metres (centreline to centreline) from the road it merges with. */
-function parted(d, sep) {
+
+/**
+ * The matching places on the other road(s) that road coordinate `d` overlaps near a junction: [coordinate on the other road,
+ * whether `d`'s road gives way to it]. The loop gives way to nothing; a detour gives way to the loop, to the road it leaves, and
+ * to the road it merges into.
+ */
+function partners(d) {
+  const out = [];
   for (const sp of SPURS) {
-    let other = null;
     const parent = sp.parent >= 0 ? SPURS[sp.parent] : null;
-    if (d < LOOP) {
-      if (!parent && d >= sp.fork && d < sp.fork + JOIN) other = sp.base + (d - sp.fork);
-      else if (d > sp.rejoin - JOIN && d <= sp.rejoin) other = sp.end - (sp.rejoin - d);
-    } else if (parent && d >= parent.base && d <= parent.end && d >= sp.fork && d < sp.fork + JOIN) {
-      other = sp.base + (d - sp.fork); // a road that leaves another detour: that detour, just past the fork
-    } else if (d >= sp.base && d <= sp.end) {
-      if (d - sp.base < JOIN) other = sp.fork + (d - sp.base);
-      else if (sp.end - d < JOIN) other = sp.rejoin - (sp.end - d);
+    const onSpur = d >= sp.base && d <= sp.end;
+    // its fork: from the road it leaves (the loop, or another detour)
+    if (parent ? d >= parent.base && d <= parent.end && d >= sp.fork && d < sp.fork + JOIN : d < LOOP && d >= sp.fork && d < sp.fork + JOIN) out.push([sp.base + (d - sp.fork), false]);
+    if (onSpur && d - sp.base < JOIN) out.push([sp.fork + (d - sp.base), true]);
+    // its rejoin onto the loop
+    if (d < LOOP && d > sp.rejoin - JOIN && d <= sp.rejoin) out.push([sp.end - (sp.rejoin - d), false]);
+    if (onSpur && sp.end - d < JOIN) out.push([sp.rejoin - (sp.end - d), true]);
+    // running into another detour, which it then shares
+    if (sp.mergesInto != null) {
+      const t = SPURS[sp.mergesInto];
+      if (onSpur && sp.end - d < MERGE_ZONE) out.push([t.end - (sp.end - d), true]);
+      if (d >= t.base && d <= t.end && t.end - d < MERGE_ZONE) out.push([sp.end - (t.end - d), false]);
     }
-    if (other == null) continue;
+  }
+  return out;
+}
+
+/**
+ * True when the road at course distance d is at least `sep` metres (centreline to centreline) clear of whatever it has to give
+ * way to, for a detour, or of any road it joins, for the loop (which carries on through the junction).
+ */
+function parted(d, sep) {
+  const onLoop = d < LOOP;
+  for (const [other, gives] of partners(d)) {
+    if (!onLoop && !gives) continue;
     frame(d, _fa);
     frame(other < LOOP ? wrapLoop(other) : other, _fb);
     if (Math.hypot(_fa.x - _fb.x, _fa.z - _fb.z) < sep) return false;
   }
   return true;
+}
+
+/** Ranges [from, to] of [lo, hi] where `ok(d)` is true (sampled every `step` m), as runs; each of `min` metres or more. */
+function runs(lo, hi, ok, step = 4, min = 0) {
+  const out = [];
+  let start = null;
+  for (let d = lo; d <= hi + 1e-6; d += step) {
+    const good = d <= hi && ok(d);
+    if (good && start == null) start = d;
+    if (!good && start != null) { if (d - step - start >= min) out.push([start, Math.min(hi, d - step)]); start = null; }
+  }
+  if (start != null && hi - start >= min) out.push([start, hi]);
+  return out;
 }
 
 const LOOP_TILE = LOOP / Math.round(LOOP / 12); // a whole number of lane-marking tiles round the loop, so the dashes run unbroken over the start line
@@ -185,24 +220,42 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   group.userData.uTime = uTime;
 
   // surface
-  const { map } = makeAsphalt(anisotropy);
+  const { map, junction, plain } = makeAsphalt(anisotropy);
   const mat = toon({ map, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  // the deck of the covered bridge replaces the road between its abutments
+  const matJunction = toon({ map: junction, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  // The loop runs through every junction on its own centre line, with no edge lines where a road joins or leaves it.
+  // The deck of the covered bridge replaces the road between its abutments.
   const loopPieces = [[0, BRIDGE.x - BRIDGE.half], [BRIDGE.x + BRIDGE.half, LOOP - 1e-3]];
-  for (const [from, to] of loopPieces) for (const [a, b] of pieces(from, to)) {
-    const m = new THREE.Mesh(ribbon(a, b, { y: 0.02, uvAlong: LOOP_TILE }), mat);
-    m.receiveShadow = true;
-    m.userData.far = 3000;
-    group.add(m);
+  for (const [from, to] of loopPieces) {
+    const marks = [];
+    let at = from;
+    for (const [a, b] of runs(from, to, (d) => !parted(d, 13))) { if (a > at) marks.push([at, a, true]); marks.push([a, b, false]); at = b; }
+    if (at < to) marks.push([at, to, true]);
+    for (const [lo, hi, full] of marks) for (const [a, b] of pieces(lo, hi)) {
+      const m = new THREE.Mesh(ribbon(a, b, { y: 0.02, uvAlong: LOOP_TILE }), full ? mat : matJunction);
+      m.receiveShadow = true;
+      m.userData.far = 3000;
+      group.add(m);
+    }
   }
-  // the detours: where one shares the road with the loop at its fork or rejoin, the loop's surface wins, so there is one set
-  // of lane markings there and the detour's emerges from underneath as the roads part
-  const spurMat = toon({ map, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  for (const sp of SPURS) for (const [a, b] of pieces(sp.base, sp.end)) {
-    const spur = new THREE.Mesh(ribbon(a, b, { y: sp.parent >= 0 ? 0.014 : 0.008 }), spurMat); // a hair lower than the loop, so the two never z-fight where they overlap (and a road that leaves another detour sits a hair above it)
-    spur.receiveShadow = true;
-    spur.userData.far = 3000;
-    group.add(spur);
+  // The detours: plain tarmac while a road is still running in or out of the one it gives way to, and fully marked once the
+  // two have parted. Each sits a hair above the one before it (and all below the loop), so where they coincide the same road
+  // is not drawn twice at one height.
+  const spurMats = SPURS.map((sp) => {
+    const o = { polygonOffset: true, polygonOffsetFactor: -1 - sp.index * 0.25, polygonOffsetUnits: -1 - sp.index };
+    return { full: toon({ map, ...o }), plain: toon({ map: plain, ...o }) };
+  });
+  for (const sp of SPURS) {
+    const spans = [];
+    let at = sp.base;
+    for (const [a, b] of runs(sp.base, sp.end, (d) => !parted(d, 10.5))) { if (a > at) spans.push([at, a, true]); spans.push([a, b, false]); at = b; }
+    if (at < sp.end) spans.push([at, sp.end, true]);
+    for (const [lo, hi, full] of spans) for (const [a, b] of pieces(lo, hi)) {
+      const spur = new THREE.Mesh(ribbon(a, b, { y: 0.008 + sp.index * 0.003 }), full ? spurMats[sp.index].full : spurMats[sp.index].plain);
+      spur.receiveShadow = true;
+      spur.userData.far = 3000;
+      group.add(spur);
+    }
   }
   // every stretch of road that gets posts and chevrons: the loop, then each detour
   const spans = [[0, LOOP], ...SPURS.map((sp) => [sp.base, sp.end])];
@@ -221,14 +274,8 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   const railRuns = [];
   for (const [from, to] of roadSpans) {
     for (const [a, b] of railPieces(from, to)) {
-      if (a < LOOP) { if (b - a > 1) railRuns.push([a, b]); continue; }
-      let start = null;
-      for (let d = a; d <= b + 1e-6; d += 3) {
-        const ok = d <= b && parted(d, 11.6);
-        if (ok && start == null) start = d;
-        if (!ok && start != null) { if (d - 3 - start > 6) railRuns.push([start, d - 3]); start = null; }
-      }
-      if (start != null && b - start > 6) railRuns.push([start, b]);
+      // (the loop has none through a junction, and a detour none until it has parted from the road it gives way to)
+      for (const run of runs(a, b, (d) => parted(d, a < LOOP ? 13 : 11.6), 3, 6)) railRuns.push(run);
     }
   }
   const railMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
@@ -244,7 +291,7 @@ export function buildRoad({ anisotropy = 8 } = {}) {
   const kerbMat = toon({ map: makeKerb(), polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
   for (const [from, to] of roadSpans) for (const [a0, b0] of bendRanges(from, to)) {
     for (const [a, b] of railPieces(a0, b0)) {
-      if (b - a < 8 || (a >= LOOP && !(parted(a, 14) && parted(b, 14)))) continue;
+      if (b - a < 8 || !(parted(a, 14) && parted(b, 14) && parted((a + b) / 2, 14))) continue;
       const left = ribbon(a, b, { l0: -5.55, l1: -4.88, y: 0.034, step: 2, uvAlong: 3.6 });
       const right = ribbon(a, b, { l0: 4.88, l1: 5.55, y: 0.034, step: 2, uvAlong: 3.6 });
       const km = new THREE.Mesh(mergeGeometries([left, right]), kerbMat);

@@ -34,31 +34,41 @@ const speckle = (ctx, w, h, n, rand, lo, hi, a) => {
 export function makeAsphalt(aniso) {
   const W = 256, H = 512;
   const px = W / 11.6; // pixels per metre across
-  const [c, ctx] = canvas(W, H);
-  const rand = mulberry32(5);
-  ctx.fillStyle = '#566083';
-  ctx.fillRect(0, 0, W, H);
-  // shoulders are a lighter slate
-  ctx.fillStyle = '#6a759c';
-  ctx.fillRect(0, 0, (5.8 - 4.55) * px, H);
-  ctx.fillRect((5.8 + 4.55) * px, 0, (5.8 - 4.55) * px, H);
-  // a fine, soft grain so big flat areas are not dead
-  speckle(ctx, W, H, 9000, rand, 40, 120, 0.08);
-  // darker bands where the wheels run
-  for (const lat of [-2.4, 2.4]) {
-    const g = ctx.createLinearGradient((lat + 5.8) * px - 0.9 * px, 0, (lat + 5.8) * px + 0.9 * px, 0);
-    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, 'rgba(10,12,30,0.16)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect((lat + 5.8) * px - 0.9 * px, 0, 1.8 * px, H);
-  }
-  // lane markings: bold edge lines and a centre dash (3 m on, 3 m off)
-  ctx.fillStyle = '#ffffff';
-  const edge = 0.22 * px;
-  ctx.fillRect((5.8 - 4.35) * px - edge / 2, 0, edge, H);
-  ctx.fillRect((5.8 + 4.35) * px - edge / 2, 0, edge, H);
-  const dash = 0.2 * px;
-  for (let k = 0; k < 2; k++) ctx.fillRect(5.8 * px - dash / 2, k * (H / 2), dash, H / 4);
-  return { map: tex(c, { aniso }) };
+  /** The tarmac, with the lane markings asked for: `edges` the bold edge lines, `dash` the centre dash. */
+  const draw = ({ edges, dash }) => {
+    const [c, ctx] = canvas(W, H);
+    const rand = mulberry32(5);
+    ctx.fillStyle = '#566083';
+    ctx.fillRect(0, 0, W, H);
+    // shoulders are a lighter slate
+    ctx.fillStyle = '#6a759c';
+    ctx.fillRect(0, 0, (5.8 - 4.55) * px, H);
+    ctx.fillRect((5.8 + 4.55) * px, 0, (5.8 - 4.55) * px, H);
+    // a fine, soft grain so big flat areas are not dead
+    speckle(ctx, W, H, 9000, rand, 40, 120, 0.08);
+    // darker bands where the wheels run
+    for (const lat of [-2.4, 2.4]) {
+      const g = ctx.createLinearGradient((lat + 5.8) * px - 0.9 * px, 0, (lat + 5.8) * px + 0.9 * px, 0);
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, 'rgba(10,12,30,0.16)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect((lat + 5.8) * px - 0.9 * px, 0, 1.8 * px, H);
+    }
+    // lane markings: bold edge lines and a centre dash (3 m on, 3 m off)
+    ctx.fillStyle = '#ffffff';
+    if (edges) {
+      const edge = 0.22 * px;
+      ctx.fillRect((5.8 - 4.35) * px - edge / 2, 0, edge, H);
+      ctx.fillRect((5.8 + 4.35) * px - edge / 2, 0, edge, H);
+    }
+    if (dash) {
+      const d = 0.2 * px;
+      for (let k = 0; k < 2; k++) ctx.fillRect(5.8 * px - d / 2, k * (H / 2), d, H / 4);
+    }
+    return tex(c, { aniso });
+  };
+  // `junction` (centre dash only) is the road where another joins or leaves it, and `plain` (no markings) a road that is
+  // still running in or out of another one: an intersection has one set of lines, not two
+  return { map: draw({ edges: true, dash: true }), junction: draw({ edges: false, dash: true }), plain: draw({ edges: false, dash: false }) };
 }
 
 /** Red and white kerb stripes: one tile is one red block and one white block along the road. */

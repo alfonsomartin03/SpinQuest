@@ -280,6 +280,7 @@ export class Renderer {
     const right = new THREE.Vector3().crossVectors(fwd, up);
     const m = new THREE.Matrix4().makeBasis(fwd, up, right);
     const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    entry.model.roadQuat = (entry.model.roadQuat ?? new THREE.Quaternion()).copy(q); // the road's own tilt, before the rider leans into a bend
     const lean = clamp(Math.atan((r.v * r.v * curvatureAt(r.c)) / 9.81) * 0.7, -0.4, 0.4);
     q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -lean));
     const g = entry.model.group;
@@ -409,7 +410,7 @@ export class Renderer {
     this.aura.material.opacity = 0.3 + clamp(ratio, 0, 1.4) * 0.2;
     const pulse = 1 + Math.sin(t * 4) * 0.04 + clamp(ratio - 1, 0, 1) * 0.25;
     this.aura.position.set(um.position.x, um.position.y + 0.07, um.position.z);
-    this.aura.quaternion.copy(um.quaternion);
+    this.aura.quaternion.copy(this.models.get(user).model.roadQuat ?? um.quaternion); // lies flat on the road, never leaning with the rider
     this.aura.scale.setScalar(pulse);
     this.marker.position.set(um.position.x, um.position.y + 2.25 + Math.sin(t * 3) * 0.06, um.position.z);
     this.marker.rotation.y = t * 2;

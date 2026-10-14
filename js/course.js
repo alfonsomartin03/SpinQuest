@@ -212,9 +212,11 @@ function turtlePath(x, y, h) {
  * Build one detour's tables from a dense polyline that runs from its fork to its rejoin.
  * `profile(q, len, ctx)` gives the height of its own profile q metres along (ctx: { forkE, rejoinE }); `roll(u, q, len)` adds the road's texture.
  * `endRoad` (another detour's tables) is what the last stretch runs alongside instead of the loop: its end takes that road's heights.
+ * `endHold` is how many metres at the end are exactly that road's (a road that merges into another and then shares it), and
+ * `endBlend` how far beyond that its profile eases from its own to that road's.
  * `startRoad` (with `startAt`, metres along it) and `startHeading` say the same for a road that leaves another detour, not the loop.
  */
-function buildSpur({ fork, rejoin, dense, profile, roll, endRoad = null, startRoad = null, startAt = 0, startHeading = null }) {
+function buildSpur({ fork, rejoin, dense, profile, roll, endRoad = null, endHold = 150, endBlend = 300, startRoad = null, startAt = 0, startHeading = null }) {
   const th = startHeading ?? mainHeading(fork);
   const cum = [0];
   for (let i = 1; i < dense.length; i++) cum.push(cum[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
@@ -267,18 +269,30 @@ function buildSpur({ fork, rejoin, dense, profile, roll, endRoad = null, startRo
       const dd = (road.X[i] - px) ** 2 + (road.Y[i] - py) ** 2;
       if (dd < best) { best = dd; bi = i; }
     }
-    return road.E[Math.min(road.len, bi * DS)];
+    // refine to the point on the road's line nearest to ours, so the height does not step from station to station
+    let at = bi * DS, bestD = best;
+    for (const k of [bi - 1, bi]) {
+      if (k < 0 || k >= road.n) continue;
+      const ex = road.X[k + 1] - road.X[k], ey = road.Y[k + 1] - road.Y[k];
+      const t = Math.min(1, Math.max(0, ((px - road.X[k]) * ex + (py - road.Y[k]) * ey) / (ex * ex + ey * ey || 1)));
+      const dd = (road.X[k] + ex * t - px) ** 2 + (road.Y[k] + ey * t - py) ** 2;
+      if (dd < bestD) { bestD = dd; at = (k + t) * DS; }
+    }
+    const i0 = Math.min(road.len - 1, Math.floor(at));
+    return road.E[i0] + (road.E[i0 + 1] - road.E[i0]) * (at - i0);
   };
   const eStart = Float64Array.from({ length: BLEND + 1 }, (_, q) => (startRoad ? heightBesideRoad(q, startRoad, startAt - 60, startAt + BLEND + 250) : roadHeightBeside(q, fork - 40, fork + BLEND + 150)));
-  const eEnd = Float64Array.from({ length: BLEND + 1 }, (_, q) => (endRoad ? heightBesideRoad(len - q, endRoad) : roadHeightBeside(len - q, rejoin - BLEND - 150, rejoin + 40)));
-  const lerpAt = (arr, q) => { const i = Math.min(BLEND - 1, Math.floor(q)); return arr[i] + (arr[i + 1] - arr[i]) * (q - i); };
-  const ctx = { forkE: startRoad ? startRoad.E[startAt] : mainElevation(fork), rejoinE: mainElevation(rejoin), lo: eStart[BLEND], hi: eEnd[BLEND] };
-  const near = (m) => (m <= 150 ? 1 : smooth((BLEND - m) / (BLEND - 150))); // exactly the road's profile where the two roads overlap
+  const BE = endRoad ? endHold + endBlend : BLEND; // how far from the end the profile is tied to the other road's
+  const eEnd = Float64Array.from({ length: BE + 1 }, (_, q) => (endRoad ? heightBesideRoad(len - q, endRoad, endRoad.len - BE - 300, endRoad.len) : roadHeightBeside(len - q, rejoin - BLEND - 150, rejoin + 40)));
+  const lerpAt = (arr, q) => { const i = Math.min(arr.length - 2, Math.floor(q)); return arr[i] + (arr[i + 1] - arr[i]) * (q - i); };
+  const ctx = { forkE: startRoad ? startRoad.E[startAt] : mainElevation(fork), rejoinE: mainElevation(rejoin), lo: eStart[BLEND], hi: eEnd[BE], endHold, endE: endRoad ? endRoad.E[Math.max(0, endRoad.len - endHold)] : null };
+  const nearStart = (m) => (m <= 150 ? 1 : smooth((BLEND - m) / (BLEND - 150))); // exactly the road's profile where the two roads overlap
+  const nearEnd = (m) => (m <= endHold ? 1 : smooth((endHold + endBlend - m) / endBlend));
   const elev = (s) => {
     const q = Math.min(len, Math.max(0, s));
-    const a = near(q), b = near(len - q);
-    const base = profile(q, len, ctx) * (1 - a - b) + (a ? lerpAt(eStart, Math.min(q, BLEND)) * a : 0) + (b ? lerpAt(eEnd, Math.min(len - q, BLEND)) * b : 0);
-    const window = smooth((Math.min(q, len - q) - 150) / 550); // no rolls while the two roads overlap
+    const a = nearStart(q), b = nearEnd(len - q);
+    const base = profile(q, len, ctx) * (1 - a - b) + (a ? lerpAt(eStart, Math.min(q, BLEND)) * a : 0) + (b ? lerpAt(eEnd, Math.min(len - q, BE)) * b : 0);
+    const window = smooth((q - 150) / 550) * smooth((len - q - endHold) / 550); // no rolls while the two roads overlap
     return base + window * roll(q / len, q, len);
   };
   const E = Float64Array.from({ length: len + 1 }, (_, s) => elev(s));
@@ -408,6 +422,11 @@ const FLAT = (() => {
     const tx = DEATH.X[j] - DEATH.X[k], ty = DEATH.Y[j] - DEATH.Y[k], l = Math.hypot(tx, ty) || 1;
     return (right) => [DEATH.X[i] + (ty / l) * right, DEATH.Y[i] - (tx / l) * right];
   };
+  // It merges into Death Road 300 m before the start line and the two then share one road (Y-junction), which joins the loop.
+  const MERGE = 300;
+  const mi = Math.round((DEATH.len - MERGE) / DS);
+  const mdir = [DEATH.X[mi + 1] - DEATH.X[mi - 1], DEATH.Y[mi + 1] - DEATH.Y[mi - 1]];
+  const ml = Math.hypot(...mdir);
   const way = [
     // off the loop to the right and out round the east and north of the mountain ...
     [jp.x, jp.y], at(jp, out, 80, 0, outRight), at(jp, out, 700, 190, outRight), km(2.75, -0.15), km(3.3, 0.55), km(3.6, 1.6),
@@ -416,10 +435,12 @@ const FLAT = (() => {
     [440, 3570], [-280, 3370], [-940, 3120], [-1600, 3010], [-2200, 2900], [-2700, 2660],
     // ... down the whole west side ...
     [-3000, 2100], [-3090, 1380], [-3060, 640], [-2950, 20],
-    // ... and back east under the spirals, closing on Death Road's last stretch into the start
-    [-2740, -500], [-2250, -760], [-1700, -700], dAt(1250)(520), dAt(800)(300), dAt(450)(130), dAt(200)(35), dAt(80)(0), [rp.x, rp.y],
+    // ... and back east under the spirals, closing on Death Road's last stretch until it joins it
+    [-2740, -500], [-2250, -760], [-1800, -720], dAt(1400)(480), dAt(1000)(260), dAt(560)(70), [DEATH.X[mi], DEATH.Y[mi]],
   ];
-  const dense = weave(curveThrough(way, out, fin, 300, 300), [[30, 860, 0.3], [10, 500, 1.7]], 700, 1300);
+  const approach = weave(curveThrough(way, out, [mdir[0] / ml, mdir[1] / ml], 300, 300), [[30, 860, 0.3], [10, 500, 1.7]], 700, 1100);
+  // the shared stretch is Death Road's own points, so the two coincide exactly
+  const dense = [...approach, ...Array.from({ length: DEATH.n - mi }, (_, k) => [DEATH.X[mi + 1 + k], DEATH.Y[mi + 1 + k]])];
   // where the link leaves: the point of the road nearest BRANCH_NEAR
   let cum = 0, best = Infinity, branch = 0;
   for (let i = 1; i < dense.length; i++) {
@@ -431,11 +452,11 @@ const FLAT = (() => {
   const top = mainElevation(6700) - 2; // the road swells up to about the height of the loop where the link rejoins it, then eases down to the start
   const spur = buildSpur({
     fork, rejoin, dense,
-    profile: (q, len, { lo, hi }) => (q <= branch ? lo + (top - lo) * smooth((q - 450) / (branch - 450)) : top + (hi - top) * smooth((q - branch) / (len - 900 - branch))),
+    profile: (q, len, { lo, endE }) => (q <= branch ? lo + (top - lo) * smooth((q - 450) / (branch - 450)) : top + (endE - top) * smooth((q - branch) / (len - MERGE - 450 - branch))),
     roll: (u, q) => meadowRoll(q),
-    endRoad: DEATH,
+    endRoad: DEATH, endHold: MERGE, endBlend: 450,
   });
-  return { ...spur, fork, rejoin, branch, id: 'valley', name: FLAT_NAME, color: '#3ee0cf' };
+  return { ...spur, fork, rejoin, branch, mergesInto: 'death', id: 'valley', name: FLAT_NAME, color: '#3ee0cf' };
 })();
 
 const LINK = (() => {
@@ -521,6 +542,7 @@ export const SPURS = (() => {
     const p = s.forkOn ? list.find((o) => o.id === s.forkOn.spur) : null;
     s.parent = p ? p.index : -1;
     if (p) s.fork = p.base + s.forkOn.at;
+    s.mergesInto = s.mergesInto ? list.find((o) => o.id === s.mergesInto).index : null; // a road that runs into another before the loop, and shares its last stretch
     s.children = [];
     // the stretch of loop a rider on this road is taken to be replacing, for ordering riders and moving the sun
     s.roadFrom = p ? s.rejoin - 300 : s.fork;
