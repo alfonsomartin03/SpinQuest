@@ -16,8 +16,11 @@ import { LANDMARKS } from './course.js';
 import { DoubleClick } from './click.js';
 import { buildFit, fitFileName, PLACES, MIN_SECONDS } from './export.js';
 import { levelFor, levelTitle, xpForLevel, defaultHrLimits, cleanHrLimits, clamp } from './physics.js';
+import { t, applyDom, getLang, setLang, onLangChange, locale } from './i18n.js';
 
 window.__sqLoaded = true;
+document.documentElement.lang = getLang();
+applyDom();
 // ?debug=1 exposes the running game on window.__sq, for poking at it from the console
 if (new URLSearchParams(location.search).has('debug')) Object.defineProperty(window, '__sq', { get: () => ({ game, renderer, mode }) });
 const $ = (id) => document.getElementById(id);
@@ -86,10 +89,8 @@ let sendTimer = 0;
 
 // ---- menu -------------------------------------------------------------------------------
 
-if (!bluetoothSupported()) {
-  $('bt-warning').textContent = bluetoothProblem();
-  $('bt-warning').hidden = false;
-}
+const showBtWarning = () => { $('bt-warning').textContent = bluetoothProblem(); $('bt-warning').hidden = false; };
+if (!bluetoothSupported()) showBtWarning();
 
 /** Custom HR zone ceilings from the menu, or null while they are just following Max HR. */
 function readHrLimits() {
@@ -102,7 +103,7 @@ function showHrLimits() {
   const maxHr = parseFloat($('p-maxhr').value) || profile.maxHr;
   $('hrzones').dataset.custom = custom ? '1' : '0';
   (custom ?? defaultHrLimits(maxHr)).forEach((v, i) => { $(`hrz-${i + 1}`).value = v; });
-  $('hrz-note').textContent = custom ? '(custom)' : '(standard zones in use)';
+  $('hrz-note').textContent = t(custom ? '(custom)' : '(standard zones in use)');
   $('hrz-reset').hidden = !custom;
 }
 
@@ -130,6 +131,12 @@ function readProfile() {
   return profile;
 }
 
+function fillWorkouts() {
+  const cur = $('workout').value || profile.workout;
+  $('workout').innerHTML = STRUCTURED.map((w) => `<option value="${w.id}">${t(w.name)}</option>`).join('');
+  $('workout').value = cur;
+}
+
 function fillMenu() {
   $('p-name').value = profile.name;
   $('p-weight').value = profile.weight;
@@ -137,7 +144,7 @@ function fillMenu() {
   $('p-maxhr').value = profile.maxHr;
   showHrLimits();
   $('click-swap').checked = !!profile.clickSwap;
-  $('workout').innerHTML = STRUCTURED.map((w) => `<option value="${w.id}">${w.name}</option>`).join('');
+  fillWorkouts();
   $('workout').value = profile.workout;
   document.querySelector(`input[name=ridemode][value=${profile.mode}]`).checked = true;
   document.querySelector(`input[name=shiftmode][value=${profile.shift}]`).checked = true;
@@ -154,40 +161,40 @@ const canControl = () => ['idle', 'requesting', 'ready'].includes(controlState()
 function refreshMenu() {
   const p = readProfile();
   const w = STRUCTURED.find((x) => x.id === p.workout) ?? STRUCTURED[0];
-  $('workout-desc').textContent = w.desc;
+  $('workout-desc').textContent = t(w.desc);
   drawWorkoutProfile($('workout-preview'), w, p.ftp);
   document.querySelectorAll('.modebox').forEach((box) => { box.hidden = box.dataset.for !== p.mode; });
   const lvl = levelFor(progress.xp);
-  $('m-level').textContent = `Level ${lvl}`;
-  $('m-title').textContent = levelTitle(lvl);
+  $('m-level').textContent = t('Level {n}', { n: lvl });
+  $('m-title').textContent = t(levelTitle(lvl));
   $('m-xpbar').style.width = `${((progress.xp - xpForLevel(lvl)) / (xpForLevel(lvl + 1) - xpForLevel(lvl))) * 100}%`;
-  $('m-xp').textContent = `${progress.xp.toLocaleString()} XP · ${Object.keys(progress.ach).length}/${ACHIEVEMENTS.length} achievements · ${Object.keys(progress.discovered).length}/${LANDMARKS.length} landmarks`;
-  let hint = 'No trainer? No problem: you will ride with the keyboard.';
+  $('m-xp').textContent = t('{xp} XP · {a}/{at} achievements · {l}/{lt} landmarks', { xp: progress.xp.toLocaleString(locale()), a: Object.keys(progress.ach).length, at: ACHIEVEMENTS.length, l: Object.keys(progress.discovered).length, lt: LANDMARKS.length });
+  let hint = t('No trainer? No problem: you will ride with the keyboard.');
   if (links.trainer) {
     if (canControl() && p.control !== 'off') {
       hint = {
         free: p.shift === 'auto'
-          ? 'Gears change for you. You choose how hard to pedal.'
-          : 'You change gear: Zwift Click, + − buttons or ← →.',
-        erg: `The trainer holds ${p.ergWatts} watts. Change it with + and −.`,
-        workout: 'The trainer sets each interval for you.',
+          ? t('Gears change for you. You choose how hard to pedal.')
+          : t('You change gear: Zwift Click, + − buttons or ← →.'),
+        erg: t('The trainer holds {watts} watts. Change it with + and −.', { watts: p.ergWatts }),
+        workout: t('The trainer sets each interval for you.'),
       }[p.mode];
-    } else hint = 'You set the power on your trainer. SpinQuest just reads it.';
+    } else hint = t('You set the power on your trainer. SpinQuest just reads it.');
   }
   $('start-hint').textContent = hint;
-  $('start').textContent = links.trainer ? 'Start ride' : 'Start with keyboard';
+  $('start').textContent = t(links.trainer ? 'Start ride' : 'Start with keyboard');
   // the cadence range steers auto-shift, and guards ERG and workout targets against grinding
   const autoOn = p.mode === 'free' && p.shift === 'auto';
   $('cadrange').classList.toggle('off', p.mode === 'free' && !autoOn);
   $('cad-low').disabled = $('cad-high').disabled = p.mode === 'free' && !autoOn;
-  $('cad-note').textContent = autoOn ? 'Auto-shift changes gear when you pedal slower or faster than this.'
+  $('cad-note').textContent = t(autoOn ? 'Auto-shift changes gear when you pedal slower or faster than this.'
     : p.mode === 'free' ? 'Only used by auto-shift.'
-      : 'If you pedal slower than the first number, the trainer eases off so you never grind.';
+      : 'If you pedal slower than the first number, the trainer eases off so you never grind.');
 }
 // HR zones: typing in a zone box makes them custom; until then they follow Max HR
 [1, 2, 3, 4].forEach((i) => $(`hrz-${i}`).addEventListener('input', () => {
   $('hrzones').dataset.custom = '1';
-  $('hrz-note').textContent = '(custom)';
+  $('hrz-note').textContent = t('(custom)');
   $('hrz-reset').hidden = false;
 }));
 $('p-maxhr').addEventListener('input', () => {
@@ -211,11 +218,11 @@ function updateControlUi() {
   sec.classList.toggle('denied', st === 'denied');
   sec.querySelectorAll('input').forEach((el) => { el.disabled = !usable; });
   $('ctl-note').textContent = {
-    none: `${c?.reason || 'Resistance cannot be controlled on this device.'} SpinQuest will just read your power.`,
-    idle: 'Your trainer can be controlled by SpinQuest.',
-    requesting: 'Connecting to your trainer\'s resistance…',
-    ready: 'SpinQuest is setting your trainer\'s resistance.',
-    denied: `${c?.reason || 'Control was refused.'} Close any other app using the trainer, or untick the box below.`,
+    none: `${c?.reason || t('Resistance cannot be controlled on this device.')} ${t('SpinQuest will just read your power.')}`,
+    idle: t('Your trainer can be controlled by SpinQuest.'),
+    requesting: t('Connecting to your trainer\'s resistance…'),
+    ready: t('SpinQuest is setting your trainer\'s resistance.'),
+    denied: `${c?.reason || t('Control was refused.')} ${t('Close any other app using the trainer, or untick the box below.')}`,
   }[st] || '';
   refreshMenu();
 }
@@ -223,24 +230,31 @@ function updateControlUi() {
 const CARD = { trainer: 'dev-trainer', hr: 'dev-hr', click: 'dev-click' };
 const KINDS = Object.keys(CARD);
 
+/** Show a status line on a device card; kept as a function so it can be re-worded when the language changes. */
+function setStatus(kind, fn) {
+  const card = $(CARD[kind]);
+  card.statusFn = fn;
+  card.querySelector('[data-status]').textContent = fn();
+}
+
 function deviceUi(kind) {
   const card = $(CARD[kind]);
-  const status = card.querySelector('[data-status]');
   const btn = card.querySelector('[data-connect]');
   return (state, name) => {
     card.classList.toggle('connected', state === 'connected');
     card.classList.toggle('reconnecting', state === 'reconnecting');
-    status.textContent = {
-      idle: 'Not connected', connected: `Connected: ${name}`, reconnecting: `Reconnecting to ${name}…`, lost: `Lost ${name}. Wake it and try again.`, connecting: 'Pick your device in the popup…',
-    }[state] || state;
-    btn.textContent = state === 'connected' ? 'Disconnect' : 'Connect';
+    card.btnState = state;
+    setStatus(kind, () => ({
+      idle: t('Not connected'), connected: t('Connected: {name}', { name }), reconnecting: t('Reconnecting to {name}…', { name }), lost: t('Lost {name}. Wake it and try again.', { name }), connecting: t('Pick your device in the popup…'),
+    }[state] || state));
+    btn.textContent = t(state === 'connected' ? 'Disconnect' : 'Connect');
     if (state === 'connected') card.querySelector('[data-all]').hidden = true;
     if (mode === 'ride' && ['reconnecting', 'lost', 'connected'].includes(state) && links[kind]) {
-      const what = { trainer: 'Trainer', hr: 'Heart-rate strap', click: 'Zwift Click' }[kind];
+      const what = t({ trainer: 'Trainer', hr: 'Heart-rate strap', click: 'Zwift Click' }[kind]);
       const msg = {
-        connected: [`${what} connected`, name],
-        reconnecting: [`${what} lost`, 'Trying to reconnect…'],
-        lost: [`${what} disconnected`, 'Wake it up and move it closer.'],
+        connected: [t('{what} connected', { what }), name],
+        reconnecting: [t('{what} lost', { what }), t('Trying to reconnect…')],
+        lost: [t('{what} disconnected', { what }), t('Wake it up and move it closer.')],
       }[state];
       toast({ text: msg[0], sub: msg[1], kind: state === 'connected' ? 'go' : 'combo' });
     }
@@ -252,16 +266,15 @@ function deviceUi(kind) {
 async function connectDevice(kind, opts = {}) {
   const card = $(CARD[kind]);
   const ui = card.ui;
-  const statusEl = card.querySelector('[data-status]');
   if (links[kind] && !opts.force) {
     links[kind].close();
     links[kind] = null;
     if (kind === 'trainer') updateControlUi();
     return;
   }
-  if (!bluetoothSupported()) { ui('idle'); statusEl.textContent = bluetoothProblem(); return; }
+  if (!bluetoothSupported()) { ui('idle'); setStatus(kind, () => bluetoothProblem()); return; }
   ui('connecting');
-  if (opts.device) statusEl.textContent = `Looking for ${opts.device.name || 'your device'}…`;
+  if (opts.device) setStatus(kind, () => t('Looking for {name}…', { name: opts.device.name || t('your device') }));
   card.querySelector('[data-all]').hidden = true;
   try {
     const emit = kind === 'click' ? onClickButton : (f) => hub.push(f);
@@ -274,7 +287,7 @@ async function connectDevice(kind, opts = {}) {
       link.control.onState = (st) => {
         updateControlUi();
         if (mode === 'ride' && ctlActive && ['denied', 'ready'].includes(st)) {
-          toast({ text: st === 'ready' ? 'Trainer control on' : 'Trainer control off', sub: st === 'ready' ? 'SpinQuest now sets your resistance.' : link.control.reason, kind: st === 'ready' ? 'go' : 'combo' });
+          toast({ text: t(st === 'ready' ? 'Trainer control on' : 'Trainer control off'), sub: st === 'ready' ? t('SpinQuest now sets your resistance.') : link.control.reason, kind: st === 'ready' ? 'go' : 'combo' });
         }
       };
       updateControlUi();
@@ -283,7 +296,7 @@ async function connectDevice(kind, opts = {}) {
     links[kind] = null;
     ui('idle');
     console.warn('Bluetooth connect failed', err);
-    statusEl.textContent = explainError(err);
+    setStatus(kind, () => explainError(err));
     if (err.name === 'NotFoundError' && !opts.all) card.querySelector('[data-all]').hidden = false;
     if (opts.device) card.querySelector('[data-reconnect]').hidden = false;
   }
@@ -304,7 +317,8 @@ async function offerKnownDevices() {
     const dev = devices.find((d) => d.id === known[kind]?.id);
     if (!dev) continue;
     const btn = $(CARD[kind]).querySelector('[data-reconnect]');
-    btn.textContent = `Reconnect ${dev.name || known[kind].name}`;
+    btn.dataset.name = dev.name || known[kind].name;
+    btn.textContent = t('Reconnect {name}', { name: btn.dataset.name });
     btn.hidden = false;
     btn.onclick = () => connectDevice(kind, { device: dev });
   }
@@ -319,18 +333,18 @@ function showGear(flash = false) {
   const ergOn = rideMode === 'erg' && game?.workout.erg;
   box.hidden = !(gearsOn || ergOn);
   if (box.hidden) return;
-  $('g-down').title = ergOn ? 'Lower the target (−10 W)' : 'Easier gear (←)';
-  $('g-up').title = ergOn ? 'Raise the target (+10 W)' : 'Harder gear (→)';
+  $('g-down').title = t(ergOn ? 'Lower the target (−10 W)' : 'Easier gear (←)');
+  $('g-up').title = t(ergOn ? 'Raise the target (+10 W)' : 'Harder gear (→)');
   if (ergOn) {
-    $('g-label').textContent = 'W target';
+    $('g-label').textContent = t('W target');
     $('g-num').textContent = String(ergWatts());
-    $('g-info').textContent = ctlActive ? 'the trainer holds this' : 'the keyboard follows this';
+    $('g-info').textContent = t(ctlActive ? 'the trainer holds this' : 'the keyboard follows this');
     box.classList.remove('sweet');
   } else {
-    $('g-label').textContent = 'gear';
+    $('g-label').textContent = t('gear');
     $('g-num').textContent = String(gears.gear);
     const rpm = Math.round(cadSmooth);
-    $('g-info').textContent = `${rpm || '--'} rpm · ${gears.auto ? 'auto' : 'you shift'}`;
+    $('g-info').textContent = `${rpm || '--'} rpm · ${t(gears.auto ? 'auto' : 'you shift')}`;
     box.classList.toggle('sweet', rpm >= gears.low && rpm <= gears.high);
   }
   if (flash) { box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash'); }
@@ -390,22 +404,22 @@ function makeLogger(kind, label) {
 }
 const logClick = makeLogger('click', 'Zwift Click');
 const logTrainer = makeLogger('trainer', 'Trainer');
-function onClickFrame(hex) { console.debug('Zwift Click frame (not a button press we know):', hex); noteClick(`Click sent something unfamiliar: ${hex}`); }
+function onClickFrame(hex) { console.debug('Zwift Click frame (not a button press we know):', hex); noteClick(t('Click sent something unfamiliar: {hex}', { hex })); }
 let lastWhy = -9999;
 /** Why a press did nothing, once in a while, so the rider isn't left guessing. */
 function explainNoGears() {
   if (mode !== 'ride' || performance.now() - lastWhy < 6000) return;
   lastWhy = performance.now();
-  const why = useSim ? 'Gears need a connected trainer. You are riding with the keyboard.'
-    : rideMode === 'workout' ? 'In a workout the trainer sets each interval for you.'
-      : profile.control === 'off' ? 'You turned off trainer control, so gears are off too.'
-        : 'SpinQuest is not controlling your trainer, so gears are off.';
-  toast({ text: 'No gears this ride', sub: why, kind: 'combo' });
+  const why = useSim ? t('Gears need a connected trainer. You are riding with the keyboard.')
+    : rideMode === 'workout' ? t('In a workout the trainer sets each interval for you.')
+      : profile.control === 'off' ? t('You turned off trainer control, so gears are off too.')
+        : t('SpinQuest is not controlling your trainer, so gears are off.');
+  toast({ text: t('No gears this ride'), sub: why, kind: 'combo' });
 }
 
 function onClickButton(dir) {
   const step = profile.clickSwap ? -dir : dir;
-  noteClick(`Last press: ${step > 0 ? 'harder (+)' : 'easier (−)'}${rideMode === 'erg' ? ' · ERG target' : ctlActive && rideMode === 'free' ? '' : ' · no gears this ride'}`);
+  noteClick(`${t('Last press: {what}', { what: t(step > 0 ? 'harder (+)' : 'easier (−)') })}${rideMode === 'erg' ? ` · ${t('ERG target')}` : ctlActive && rideMode === 'free' ? '' : ` · ${t('no gears this ride')}`}`);
   const res = clicks.press(performance.now(), mode === 'ride' && game?.extension().state === 'approach');
   if (res.double) {
     if (res.undo) shiftGear(-res.undo);
@@ -468,7 +482,7 @@ function downloadFit() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
-  toast({ text: 'Ride saved', sub: fit.name, kind: 'go' });
+  toast({ text: t('Ride saved'), sub: fit.name, kind: 'go' });
 }
 $('s-fit-dl').addEventListener('click', downloadFit);
 $('m-fit').addEventListener('click', downloadFit);
@@ -499,7 +513,7 @@ function startRide() {
   const workout = rideMode === 'erg' ? ergWorkout(p.ergWatts, p.ftp) : rideMode === 'workout' ? (STRUCTURED.find((w) => w.id === p.workout) ?? STRUCTURED[0]) : WORKOUTS[0];
   useSim = !links.trainer;
   sim = new Sim(p);
-  game = new Game({ profile: { ...p, name: p.name || 'You' }, workout, progress });
+  game = new Game({ profile: { ...p, name: p.name || t('You') }, workout, progress });
   game.xpAtStart = progress.xp;
   game.levelAtStart = levelFor(progress.xp);
 
@@ -624,6 +638,29 @@ function frame(now) {
 fillMenu();
 updateControlUi();
 
+// ---- language ---------------------------------------------------------------------------------------
+// setLang() re-translates the static page; the menu text that JS writes is rebuilt here. Connected devices stay connected.
+
+const langButtons = document.querySelectorAll('[data-lang]');
+const markLang = () => langButtons.forEach((b) => { const on = b.dataset.lang === getLang(); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+langButtons.forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
+markLang();
+onLangChange(() => {
+  markLang();
+  if (!bluetoothSupported()) showBtWarning();
+  fillWorkouts();
+  showHrLimits();
+  for (const kind of KINDS) {
+    const card = $(CARD[kind]);
+    if (card.statusFn) card.querySelector('[data-status]').textContent = card.statusFn();
+    card.querySelector('[data-connect]').textContent = t(card.btnState === 'connected' ? 'Disconnect' : 'Connect');
+    const rc = card.querySelector('[data-reconnect]');
+    if (rc.dataset.name) rc.textContent = t('Reconnect {name}', { name: rc.dataset.name });
+  }
+  updateControlUi();
+  refreshMenu();
+});
+
 // graphics quality
 $('quality').value = renderer.quality;
 $('quality').addEventListener('change', () => renderer.applyQuality($('quality').value));
@@ -632,13 +669,13 @@ $('quality').addEventListener('change', () => renderer.applyQuality($('quality')
 (async function init() {
   const bar = $('loader-bar'), text = $('loader-text');
   try {
-    await renderer.build((p, label) => { bar.style.width = `${Math.round(p * 100)}%`; text.textContent = label; });
+    await renderer.build((p, label) => { bar.style.width = `${Math.round(p * 100)}%`; text.textContent = t(label); });
   } catch (err) {
     console.error(err);
-    text.textContent = "Couldn't start the game graphics";
+    text.textContent = t("Couldn't start the game graphics");
     const e = $('loader-error');
     e.hidden = false;
-    e.textContent = `Use an up-to-date Chrome, Edge, Safari or Firefox, and make sure hardware acceleration is on. (Details: ${err.message || err})`;
+    e.textContent = t('Use an up-to-date Chrome, Edge, Safari or Firefox, and make sure hardware acceleration is on. (Details: {msg})', { msg: err.message || err });
     return;
   }
   $('loader').classList.add('done');

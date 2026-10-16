@@ -1,6 +1,8 @@
 // Web Bluetooth: smart trainers / power meters (FTMS, Cycling Power) and heart rate straps.
 // Read-only: we never write to the trainer, so the user stays in control of resistance.
 
+import { t } from './i18n.js';
+
 export const UUID = {
   FTMS: 0x1826,
   INDOOR_BIKE_DATA: 0x2ad2,
@@ -142,13 +144,13 @@ export class TrainerControl {
         const dv = await (await service.getCharacteristic(UUID.FTMS_FEATURE)).readValue();
         canTarget = dv.byteLength >= 8 ? !!(dv.getUint32(4, true) & (1 << 3)) : true; // target-setting bit 3 = power target
       } catch { /* feature read is optional */ }
-      if (!canTarget) { this.#set('none', 'This trainer cannot hold a target power.'); return; }
+      if (!canTarget) { this.#set('none', t('This trainer cannot hold a target power.')); return; }
       cp.addEventListener('characteristicvaluechanged', (e) => this.#onIndication(e.target.value));
       await cp.startNotifications();
       this.cp = cp;
       this.#set('idle');
     } catch {
-      this.#set('none', 'This device has no trainer control.');
+      this.#set('none', t('This device has no trainer control.'));
     }
   }
 
@@ -189,7 +191,7 @@ export class TrainerControl {
     if (r.op === FTMS_OP.REQUEST_CONTROL) {
       clearTimeout(this.timer);
       if (r.ok) { this.#write(Uint8Array.of(FTMS_OP.START)); this.#set('ready'); }
-      else this.#set('denied', r.result === 0x05 ? 'Another app has control of this trainer.' : 'The trainer refused control.');
+      else this.#set('denied', r.result === 0x05 ? t('Another app has control of this trainer.') : t('The trainer refused control.'));
     } else if (r.op === FTMS_OP.SET_TARGET_POWER && !r.ok && r.result === 0x05) {
       this.#set('idle'); // lost control: re-acquire next tick
     }
@@ -210,19 +212,19 @@ export const bluetoothSupported = () => typeof navigator !== 'undefined' && !!na
 /** Why Bluetooth can't be used here, in plain words (or null if it can). */
 export function bluetoothProblem() {
   if (bluetoothSupported()) return null;
-  if (location.protocol === 'file:') return 'Run "python3 serve.py" and open http://localhost:8000. Double-clicking index.html won\'t work.';
-  if (!window.isSecureContext) return `Bluetooth needs http://localhost:8000 (or https). This page is on ${location.origin}.`;
-  return 'This browser can\'t use Bluetooth. Switch to Google Chrome or Microsoft Edge.';
+  if (location.protocol === 'file:') return t('Run "python3 serve.py" and open http://localhost:8000. Double-clicking index.html won\'t work.');
+  if (!window.isSecureContext) return t('Bluetooth needs http://localhost:8000 (or https). This page is on {origin}.', { origin: location.origin });
+  return t('This browser can\'t use Bluetooth. Switch to Google Chrome or Microsoft Edge.');
 }
 
 /** Turn a Web Bluetooth error into advice the rider can act on. */
 export function explainError(err) {
   const msg = err?.message || String(err);
-  if (err?.name === 'NotFoundError') return 'No device picked. Wake it up (spin the pedals) and try again. Not listed? Try "Search all devices".';
-  if (err?.name === 'SecurityError') return 'Bluetooth is blocked. Allow it for your browser in your system settings, then try again.';
-  if (err?.name === 'NetworkError') return 'Found it, but could not connect. Wake it up, close any other app using it, then try again.';
-  if (/No supported power service/.test(msg)) return 'That is not a trainer or power meter. Pick your trainer or power meter from the list.';
-  return `Could not connect. ${msg}`;
+  if (err?.name === 'NotFoundError') return t('No device picked. Wake it up (spin the pedals) and try again. Not listed? Try "Search all devices".');
+  if (err?.name === 'SecurityError') return t('Bluetooth is blocked. Allow it for your browser in your system settings, then try again.');
+  if (err?.name === 'NetworkError') return t('Found it, but could not connect. Wake it up, close any other app using it, then try again.');
+  if (/No supported power service/.test(msg)) return t('That is not a trainer or power meter. Pick your trainer or power meter from the list.');
+  return t('Could not connect. {msg}', { msg });
 }
 
 // Chrome's picker lists every device matching ANY filter. Matching on the standard service keeps

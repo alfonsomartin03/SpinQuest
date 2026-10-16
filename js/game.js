@@ -9,6 +9,7 @@ import { placeOnLoop, advance, courseAt, gapBetween, roadX, sameStretch } from '
 import { workoutAt, totalDuration } from './workouts.js';
 import { RemoteRider, sanitizeState } from './net.js';
 import { ACHIEVEMENTS } from './achievements.js';
+import { t as tr } from './i18n.js';
 
 const BOTS = [
   { lat: -3.1, name: 'Maya', color: '#ffb703', f: 0.6, off: -45 },
@@ -77,14 +78,14 @@ export class Game {
     this.idle = 0;
     this.finished = false;
 
-    this.user = mkRider(profile.name || 'You', '#ff3b6b', START, { isUser: true, kind: 'you', id: 'you', weight: profile.weight, ftp: profile.ftp });
+    this.user = mkRider(profile.name || tr('You'), '#ff3b6b', START, { isUser: true, kind: 'you', id: 'you', weight: profile.weight, ftp: profile.ftp });
     this.bots = BOTS.map((b, i) => mkRider(b.name, b.color, START + b.off, {
       lat: b.lat, f: b.f, i, ph: Math.random() * 6.28, weight: BOT_WEIGHTS[i % BOT_WEIGHTS.length], mass: BOT_WEIGHTS[i % BOT_WEIGHTS.length] + 9,
       ftp: Math.round(profile.ftp * (b.f + 0.12)), hr: 88, nextAttack: 40 + Math.random() * 60, attackUntil: 0,
     }));
     this.remotes = new Map(); // id -> { rider, net }
     this.coach = workout.steps.length
-      ? mkRider('Coach', '#ffd400', START + 4, { isCoach: true, kind: 'coach', id: 'coach', weight: profile.weight, ftp: profile.ftp, mass: this.mass, lat: -0.6 })
+      ? mkRider(tr('Coach'), '#ffd400', START + 4, { isCoach: true, kind: 'coach', id: 'coach', weight: profile.weight, ftp: profile.ftp, mass: this.mass, lat: -0.6 })
       : null;
 
     // live values
@@ -132,7 +133,7 @@ export class Game {
   get totalXp() { return this.progress.xp + Math.floor(this.score); }
 
   drain() { const e = this.events; this.events = []; return e; }
-  #toast(text, sub = '', kind = 'info') { this.events.push({ type: 'toast', text, sub, kind }); }
+  #toast(text, sub = '', kind = 'info') { this.events.push({ type: 'toast', text: tr(text), sub: tr(sub), kind }); }
   #sfx(name) { this.events.push({ type: 'sfx', name }); }
   #award(points) { this.score += points * this.mult; }
 
@@ -412,8 +413,8 @@ export class Game {
     const pts = [0, 300, 200, 100][rank] ?? 50;
     this.#award(pts);
     if (rank === 1 && all.length > 1) { this.segWins++; this.#sfx('win'); } else this.#sfx('segment');
-    const medal = rank === 1 ? 'You won!' : `You came ${rank}${['st', 'nd', 'rd'][rank - 1] || 'th'} of ${all.length}`;
-    this.#toast(seg.name, `${medal} ${time.toFixed(1)} s${isPR ? ' · Your best yet!' : ''} · +${pts * this.mult} points`, rank === 1 ? 'win' : 'seg');
+    const medal = rank === 1 ? tr('You won!') : tr('You came {place} of {n}', { place: tr(['1st', '2nd', '3rd'][rank - 1] || `${rank}th`), n: all.length });
+    this.#toast(seg.name, `${medal} ${time.toFixed(1)} s${isPR ? ` · ${tr('Your best yet!')}` : ''} · ${tr('+{n} points', { n: pts * this.mult })}`, rank === 1 ? 'win' : 'seg');
   }
 
   /** Zone changes and landmark discoveries. */
@@ -422,7 +423,7 @@ export class Game {
     const bi = biomeIndex(phase);
     if (bi !== this.biome) {
       this.biome = bi;
-      this.#toast(BIOMES[bi].name.toUpperCase(), BIOMES[bi].blurb, 'zone');
+      this.#toast(tr(BIOMES[bi].name).toUpperCase(), BIOMES[bi].blurb, 'zone');
     }
     for (const lm of LANDMARKS) {
       const lmSpur = spurAt(lm.d);
@@ -436,7 +437,7 @@ export class Game {
           this.progress.discovered[lm.id] = Date.now();
           this.discoveredNow.push(lm.id);
           this.score += 100;
-          this.#toast(`${lm.emoji} ${lm.name}`, `New landmark! ${Object.keys(this.progress.discovered).length} of ${LANDMARKS.length} found · +100 points`, 'ach');
+          this.#toast(`${lm.emoji} ${tr(lm.name)}`, tr('New landmark! {n} of {total} found · +100 points', { n: Object.keys(this.progress.discovered).length, total: LANDMARKS.length }), 'ach');
           this.#sfx('ach');
         }
       } else if (d > 120) this.nearLm.delete(lm.id);
@@ -472,14 +473,14 @@ export class Game {
         this.unlocked.push(a.id);
         this.progress.ach[a.id] = Date.now();
         this.score += 250;
-        this.#toast(a.name, `Achievement! ${a.desc}`, 'ach');
+        this.#toast(a.name, tr('Achievement! {desc}', { desc: tr(a.desc) }), 'ach');
         this.#sfx('ach');
       }
     }
     const lvl = levelFor(this.totalXp);
     if (lvl > this.level) {
       this.level = lvl;
-      this.#toast('Level up!', `You are now level ${lvl}`, 'level');
+      this.#toast('Level up!', tr('You are now level {n}', { n: lvl }), 'level');
       this.#sfx('level');
     }
   }
@@ -505,8 +506,8 @@ export class Game {
       this.stepStats = { t: 0, on: 0, dur: w.step.dur };
       this.grace = 6;
       if (w.idx > 0) {
-        const len = w.step.dur < 90 ? `${w.step.dur} seconds` : `${Math.round(w.step.dur / 60)} minutes`;
-        this.#toast(w.step.label || 'Next interval', `${len} at ${w.watts} watts`, 'step');
+        const len = w.step.dur < 90 ? tr('{n} seconds', { n: w.step.dur }) : tr('{n} minutes', { n: Math.round(w.step.dur / 60) });
+        this.#toast(w.step.label || 'Next interval', tr('{len} at {watts} watts', { len, watts: w.watts }), 'step');
         this.#sfx('step');
       }
     }
@@ -517,7 +518,7 @@ export class Game {
     if (s && s.dur >= 30 && s.t > 0 && s.on / s.t >= 0.9 && this.target) {
       this.perfectIntervals++;
       this.#award(100);
-      this.#toast('Perfect interval!', `${Math.round((s.on / s.t) * 100)}% on target · +${100 * this.mult} points`, 'win');
+      this.#toast('Perfect interval!', tr('{pct}% on target · +{n} points', { pct: Math.round((s.on / s.t) * 100), n: 100 * this.mult }), 'win');
       this.#sfx('win');
     }
   }
@@ -537,7 +538,7 @@ export class Game {
       if (this.offTime > 5) { this.streak = 0; this.offTime = 0; }
     }
     this.mult = Math.min(5, 1 + Math.floor(this.streak / 30));
-    if (this.mult > prevMult) { this.#toast(`Combo x${this.mult}`, this.target ? 'Stay on target to keep it growing' : 'Keep pedalling to keep it growing', 'combo'); this.#sfx('combo'); }
+    if (this.mult > prevMult) { this.#toast(tr('Combo x{n}', { n: this.mult }), this.target ? 'Stay on target to keep it growing' : 'Keep pedalling to keep it growing', 'combo'); this.#sfx('combo'); }
 
     const rate = t ? (on ? 1 : 0) : 0.15 + 0.15 * this.pz;
     this.score += rate * this.mult * dt;

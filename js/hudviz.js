@@ -1,6 +1,7 @@
 // Drawing for the map, the climb profile and the elevation strip. Pure canvas, no DOM lookups, so it is
 // easy to test and restyle. The look is deliberately sober: dark slate, thin lines, vector glyphs.
 
+import { t } from './i18n.js';
 import { LOOP, TOTAL, SPURS, spurAt, MAP, SPUR_MAP, LANDMARKS, BIOMES, SEGMENTS, LAKE_SHAPE, elevation, gradeAt, posAt, headingAt } from './course.js';
 
 // ---- shared palette -------------------------------------------------------------------------------------------
@@ -187,7 +188,7 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     ctx.fillText('+', x, y + 0.5);
     if (zoom || (mine && ext.state === 'approach')) {
       ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = '700 10px system-ui, sans-serif';
-      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText(`Fork: ${sp.name}`, x + 12, y - 9); ctx.fillText(`Fork: ${sp.name}`, x + 12, y - 9);
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3; ctx.strokeText(t('Fork: {name}', { name: t(sp.name) }), x + 12, y - 9); ctx.fillText(t('Fork: {name}', { name: t(sp.name) }), x + 12, y - 9);
     }
   }
   ctx.font = '600 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -215,7 +216,7 @@ export function drawMap(canvas, game, { zoom = false, selectedId = null } = {}) 
     glyph(ctx, lm.kind, x + ox, y + oy, zoom ? 8.5 : 7, !!found[lm.id]);
     if (zoom && found[lm.id]) {
       ctx.fillStyle = 'rgba(220,230,244,0.85)'; ctx.font = '600 10px system-ui, sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(lm.name, x + ox + 12, y + oy);
+      ctx.fillText(t(lm.name), x + ox + 12, y + oy);
     }
   }
 
@@ -360,7 +361,7 @@ export function drawStrip(canvas, game) {
       ctx.strokeStyle = armed ? f.color : `${f.color}b0`; ctx.lineWidth = 1.5; ctx.setLineDash([2, 3]);
       ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, bottom + 2); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = armed ? f.color : `${f.color}e0`; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'right';
-      ctx.fillText(`${f.stripLabel} ↱`, x - 4, top - 6);
+      ctx.fillText(`${t(f.stripLabel)} ↱`, x - 4, top - 6);
     }
   }
   // landmarks

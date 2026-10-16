@@ -10,6 +10,8 @@
 //   c in [0, LOOP)        the main loop (any other value wraps around it, so lap counts can be passed straight in)
 //   c in a spur's range   that detour: its `base` plus the metres since its fork (see SPURS; the ranges don't overlap)
 
+import { t } from './i18n.js';
+
 export const LOOP = 10000; // metres
 /** What the flat meadow road is called (a working title: it is also the name used in the HUD, the signs and the README). */
 export const FLAT_NAME = 'Meadow Mile';
@@ -482,7 +484,7 @@ const SPUR_TEXT = {
   valley: {
     stripLabel: 'around',
     question: 'Up the Col, or around?',
-    ask: (sp) => `Around is ${km1(sp.len)} km of flat, flowing road all the way round the map to the start / finish.`,
+    ask: (sp) => t('Around is {km} km of flat, flowing road all the way round the map to the start / finish.', { km: km1(sp.len) }),
     armedTitle: 'Going around',
     armedSub: 'Bear right at the fork to skip the climb.',
     button: 'Go around',
@@ -497,7 +499,7 @@ const SPUR_TEXT = {
   link: {
     stripLabel: 'to the loop',
     question: 'Stay on the flat road, or cut back to the loop?',
-    ask: (sp) => `The link is ${km1(sp.len)} km and joins the loop after the descent, before the lake. The flat road goes on round the map.`,
+    ask: (sp) => t('The link is {km} km and joins the loop after the descent, before the lake. The flat road goes on round the map.', { km: km1(sp.len) }),
     armedTitle: 'Cutting back to the loop',
     armedSub: 'Bear left at the fork.',
     button: 'Back to the loop',
@@ -512,7 +514,7 @@ const SPUR_TEXT = {
   death: {
     stripLabel: 'Death Road',
     question: 'Finish, or Death Road?',
-    ask: (sp) => `Death Road is a steep ${km1(sp.climb)} km climb, then a long descent.`,
+    ask: (sp) => t('Death Road is a steep {km} km climb, then a long descent.', { km: km1(sp.climb) }),
     armedTitle: 'Taking Death Road',
     armedSub: 'Bear right at the fork. It is a long, steep climb.',
     button: 'Take Death Road',

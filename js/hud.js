@@ -7,6 +7,7 @@ import { LANDMARKS, BIOMES, CLIMBS, SPURS, LOOP as LOOP_LEN, activeClimb, climbS
 import { drawMap, drawClimbProfile, drawStrip, gradeColor as gradeColorImport } from './hudviz.js';
 import { totalDuration } from './workouts.js';
 import { ACHIEVEMENTS } from './achievements.js';
+import { t, locale } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 const setText = (el, v) => { if (el.textContent !== v) el.textContent = v; };
@@ -18,21 +19,21 @@ export function drawWorkoutProfile(canvas, workout, ftp, { playhead = null, samp
   if (!workout.steps.length) {
     ctx.fillStyle = 'rgba(255,255,255,.35)';
     ctx.font = '14px system-ui';
-    ctx.fillText('Free ride: no targets', 12, h / 2 + 5);
+    ctx.fillText(t('Free ride: no targets'), 12, h / 2 + 5);
     return;
   }
   const dur = totalDuration(workout);
   const maxPct = Math.max(1.3, ...workout.steps.map((s) => Math.max(s.from, s.to))) * 1.08;
-  const X = (t) => (t / dur) * w;
+  const X = (u) => (u / dur) * w;
   const Y = (watts) => h - (watts / (maxPct * ftp)) * (h - 4);
-  let t = 0;
+  let at = 0;
   for (const s of workout.steps) {
     const col = POWER_ZONES[powerZone(((s.from + s.to) / 2) * ftp, ftp)].color;
-    ctx.fillStyle = col + (playhead != null && t + s.dur < playhead ? '55' : 'cc');
+    ctx.fillStyle = col + (playhead != null && at + s.dur < playhead ? '55' : 'cc');
     ctx.beginPath();
-    ctx.moveTo(X(t), h); ctx.lineTo(X(t), Y(s.from * ftp)); ctx.lineTo(X(t + s.dur), Y(s.to * ftp)); ctx.lineTo(X(t + s.dur), h);
+    ctx.moveTo(X(at), h); ctx.lineTo(X(at), Y(s.from * ftp)); ctx.lineTo(X(at + s.dur), Y(s.to * ftp)); ctx.lineTo(X(at + s.dur), h);
     ctx.fill();
-    t += s.dur;
+    at += s.dur;
   }
   if (samples && samples.length) {
     ctx.strokeStyle = '#fff';
@@ -110,7 +111,7 @@ export class Hud {
     const { ftp, weight, maxHr } = game.profile;
     setText(e['h-power'], String(Math.round(game.p3)));
     const z = POWER_ZONES[powerZone(game.p3, ftp)];
-    setText(e['h-pzone'], z.name);
+    setText(e['h-pzone'], t(z.name));
     e['h-pzone'].style.background = z.color;
     e['h-power'].style.color = z.color;
     const zi = POWER_ZONES.indexOf(z);
@@ -139,11 +140,11 @@ export class Hud {
     e['h-pause'].hidden = true;
     const waiting = !game.started || (game.paused && !game.finished);
     e['h-wait'].hidden = !waiting;
-    setText(e['h-wait'], game.started ? 'Paused. Pedal to carry on.' : 'Start pedalling to begin');
+    setText(e['h-wait'], t(game.started ? 'Paused. Pedal to carry on.' : 'Start pedalling to begin'));
     e['h-sim'].hidden = !simActive;
 
     // score & combo
-    setText(e['h-score'], String(Math.floor(game.score)).replace(/\B(?=(\d{3})+$)/g, ','));
+    setText(e['h-score'], Math.floor(game.score).toLocaleString(locale()));
     setText(e['h-mult'], `x${game.mult}`);
     const into = game.mult >= 5 ? 1 : (game.streak % 30) / 30;
     e['h-multbar'].style.width = `${into * 100}%`;
@@ -153,7 +154,7 @@ export class Hud {
     }
     const xp = game.totalXp;
     const lvl = levelFor(xp);
-    setText(e['h-level'], `Lv ${lvl}`);
+    setText(e['h-level'], t('Lv {n}', { n: lvl }));
     e['h-xpbar'].style.width = `${((xp - xpForLevel(lvl)) / (xpForLevel(lvl + 1) - xpForLevel(lvl))) * 100}%`;
 
     this.#workout(game);
@@ -165,7 +166,7 @@ export class Hud {
       this.vizAt = game.clock;
       drawStrip(this.el['h-mini'], game);
       drawMap(this.el['h-map'], game, { zoom: this.mapZoom, selectedId: this.selectedId });
-      setText(this.el['h-mapnote'], this.mapZoom ? 'following you' : `${Object.keys(game.progress.discovered).length} of ${LANDMARKS.length} landmarks found`);
+      setText(this.el['h-mapnote'], this.mapZoom ? t('following you') : t('{n} of {total} landmarks found', { n: Object.keys(game.progress.discovered).length, total: LANDMARKS.length }));
     }
     this.#zone(game);
     if (game.clock - this.graphAt > 0.5) {
@@ -181,16 +182,16 @@ export class Hud {
     const w = game.wo;
     const tg = e['h-target'];
     if (!game.workout.steps.length) {
-      setText(e['h-step'], 'Free ride');
-      setText(e['h-next'], 'Your power, last 5 minutes');
+      setText(e['h-step'], t('Free ride'));
+      setText(e['h-next'], t('Your power, last 5 minutes'));
       setText(e['h-remain'], '');
       tg.hidden = true;
       return;
     }
     if (game.workout.erg) { // ERG mode: one steady target, adjustable while riding
       tg.hidden = !game.target;
-      setText(e['h-step'], 'ERG mode');
-      setText(e['h-next'], 'Match the target. + and − change it by 10 watts.');
+      setText(e['h-step'], t('ERG mode'));
+      setText(e['h-next'], t('Match the target. + and − change it by 10 watts.'));
       setText(e['h-remain'], '');
       if (game.target) {
         setText(e['h-twatts'], String(game.target.watts));
@@ -202,13 +203,13 @@ export class Hud {
       return;
     }
     if (!w) {
-      setText(e['h-step'], game.workout.name);
-      setText(e['h-next'], 'Start pedalling to begin');
+      setText(e['h-step'], t(game.workout.name));
+      setText(e['h-next'], t('Start pedalling to begin'));
       return;
     }
     tg.hidden = !game.target;
-    setText(e['h-step'], game.finished ? 'Workout complete' : (w.step.label || 'Interval'));
-    setText(e['h-next'], w.next ? `Next: ${w.next.label || 'Interval'}, ${Math.round(w.next.from * game.profile.ftp)} watts for ${fmtTime(w.next.dur)}` : 'Last interval');
+    setText(e['h-step'], t(game.finished ? 'Workout complete' : (w.step.label || 'Interval')));
+    setText(e['h-next'], w.next ? t('Next: {label}, {watts} watts for {time}', { label: t(w.next.label || 'Interval'), watts: Math.round(w.next.from * game.profile.ftp), time: fmtTime(w.next.dur) }) : t('Last interval'));
     setText(e['h-remain'], fmtTime(w.remaining));
     if (game.target) {
       setText(e['h-twatts'], String(game.target.watts));
@@ -239,22 +240,22 @@ export class Hud {
     const ui = all.findIndex((e) => e.r.isUser);
     const start = clamp(ui - Math.floor(n / 2), 0, all.length - n);
     const user = game.user;
-    const mark = { coach: '<em class="kind k-coach" title="Coach">★</em>', remote: '<em class="kind k-remote" title="Live rider">●</em>' };
+    const mark = { coach: `<em class="kind k-coach" title="${t('Coach')}">★</em>`, remote: `<em class="kind k-remote" title="${t('Live rider')}">●</em>` };
     const rows = all.slice(start, start + n).map(({ r, gapSec, gap }, i) => {
       const watts = Math.round(r.p3);
       const wkg = r.weight ? (r.p3 / r.weight).toFixed(1) : '--';
       const speed = (r.v * 3.6).toFixed(r.isUser ? 1 : 0);
       const gapTxt = r.isUser ? '' : fmtGap(gapSec);
       const col = r.kind === 'coach' ? '#ffd400' : r.color;
-      return `<div class="rrow ${r.isUser ? 'me' : ''} ${r.id === this.selectedId ? 'sel' : ''} ${r.drafting ? 'draft' : ''}" data-id="${r.id}" title="${r.isUser ? 'You' : `${Math.abs(Math.round(gap))} m ${gap > 0 ? 'ahead' : 'behind'}`}">
+      return `<div class="rrow ${r.isUser ? 'me' : ''} ${r.id === this.selectedId ? 'sel' : ''} ${r.drafting ? 'draft' : ''}" data-id="${r.id}" title="${r.isUser ? t('You') : t(gap > 0 ? '{n} m ahead' : '{n} m behind', { n: Math.abs(Math.round(gap)) })}">
         <i class="rpos">${start + i + 1}</i><i class="rcol" style="background:${col}"></i>
         <span class="rname">${mark[r.kind] ?? ''}${esc(r.name)}</span>
         <span class="rpow"><b>${watts}</b><small>${wkg}</small></span>
         <span class="rspd">${speed}</span>
         <span class="rgap ${gapSec > 0 ? 'ahead' : 'behind'}">${gapTxt}</span></div>`;
     }).join('');
-    this.el['h-board'].innerHTML = `<div class="rhead"><span></span><span></span><span>Rider</span><span>W · W/kg</span><span>km/h</span><span>Gap</span></div>${rows}`;
-    setText(this.el['h-board-count'], `${all.length} riding`);
+    this.el['h-board'].innerHTML = `<div class="rhead"><span></span><span></span><span>${t('Rider')}</span><span>W · W/kg</span><span>km/h</span><span>${t('Gap')}</span></div>${rows}`;
+    setText(this.el['h-board-count'], t('{n} riding', { n: all.length }));
     void user;
     this.#card(game, all);
   }
@@ -271,17 +272,17 @@ export class Hud {
     const dist = Math.max(0, r.x - (game.user.x - game.distance)) / 1000;
     card.hidden = false;
     card.innerHTML = `
-      <div class="rc-head"><i style="background:${r.kind === 'coach' ? '#ffd400' : r.color}"></i><b>${esc(r.name)}</b><button class="rc-x" aria-label="Close">×</button></div>
+      <div class="rc-head"><i style="background:${r.kind === 'coach' ? '#ffd400' : r.color}"></i><b>${esc(r.name)}</b><button class="rc-x" aria-label="${t('Close')}">×</button></div>
       <div class="rc-big"><span style="color:${zone.color}">${Math.round(r.p3)}<small>W</small></span><span>${wkg.toFixed(1)}<small>W/kg</small></span></div>
       <div class="rc-grid">
-        <div><small>Speed</small><b>${(r.v * 3.6).toFixed(1)} km/h</b></div>
-        <div><small>Cadence</small><b>${r.cad ? Math.round(r.cad) : '--'} rpm</b></div>
-        <div><small>Heart rate</small><b>${r.hr != null ? Math.round(r.hr) : '--'} bpm</b></div>
-        <div><small>${r.isUser ? 'Your FTP' : 'FTP'}</small><b>${Math.round(r.ftp)} W · ${ftpWkg.toFixed(1)}</b></div>
-        <div><small>Weight</small><b>${Math.round(r.weight)} kg</b></div>
-        <div><small>${r.isUser ? 'Ridden' : gap >= 0 ? 'Ahead by' : 'Behind by'}</small><b>${r.isUser ? dist.toFixed(2) + ' km' : `${fmtGap(gapSec).slice(1)} · ${Math.abs(Math.round(gap))} m`}</b></div>
+        <div><small>${t('Speed')}</small><b>${(r.v * 3.6).toFixed(1)} km/h</b></div>
+        <div><small>${t('Cadence')}</small><b>${r.cad ? Math.round(r.cad) : '--'} rpm</b></div>
+        <div><small>${t('Heart rate')}</small><b>${r.hr != null ? Math.round(r.hr) : '--'} bpm</b></div>
+        <div><small>${r.isUser ? t('Your FTP') : 'FTP'}</small><b>${Math.round(r.ftp)} W · ${ftpWkg.toFixed(1)}</b></div>
+        <div><small>${t('Weight')}</small><b>${Math.round(r.weight)} kg</b></div>
+        <div><small>${t(r.isUser ? 'Ridden' : gap >= 0 ? 'Ahead by' : 'Behind by')}</small><b>${r.isUser ? dist.toFixed(2) + ' km' : `${fmtGap(gapSec).slice(1)} · ${Math.abs(Math.round(gap))} m`}</b></div>
       </div>
-      <div class="rc-foot">${r.kind === 'bot' ? 'Simulated rider' : r.kind === 'remote' ? 'Live rider' : r.kind === 'coach' ? 'Your workout coach' : ''}${r.drafting ? ' · drafting' : ''}</div>`;
+      <div class="rc-foot">${r.kind === 'bot' ? t('Simulated rider') : r.kind === 'remote' ? t('Live rider') : r.kind === 'coach' ? t('Your workout coach') : ''}${r.drafting ? ` · ${t('drafting')}` : ''}</div>`;
     card.querySelector('.rc-x').onclick = () => { this.selectedId = null; this.boardAt = -1; };
   }
 
@@ -290,7 +291,7 @@ export class Hud {
     const c = game.curSeg;
     e['h-seg'].hidden = !c;
     if (!c) return;
-    setText(e['h-seg-name'], c.seg.name);
+    setText(e['h-seg-name'], t(c.seg.name));
     e['h-seg-bar'].style.width = `${c.progress * 100}%`;
     setText(e['h-seg-time'], `${c.elapsed.toFixed(1)}s`);
   }
@@ -308,7 +309,7 @@ export class Hud {
     }
     const found = best && game.progress.discovered[best.lm.id];
     const dTxt = best ? (best.dist < 1000 ? `${Math.round(best.dist / 10) * 10} m` : `${(best.dist / 1000).toFixed(1)} km`) : '';
-    setText(this.el['h-zone'], `${BIOMES[bi].name} · ${Math.round(elevation(phase))} m${best ? `   ·   Next: ${found ? best.lm.name : 'unknown landmark'} in ${dTxt}` : ''}`);
+    setText(this.el['h-zone'], `${t(BIOMES[bi].name)} · ${Math.round(elevation(phase))} m${best ? `   ·   ${t('Next: {name} in {dist}', { name: found ? t(best.lm.name) : t('unknown landmark'), dist: dTxt })}` : ''}`);
   }
 
   /** The next fork: announced a kilometre out, with a button (or a double click of the Zwift Click) to take the detour. */
@@ -323,17 +324,17 @@ export class Hud {
     box.classList.toggle('on', x.state === 'on');
     box.style.setProperty('--turn', sp.color);
     if (x.state === 'on') {
-      setText(e['h-turn-title'], sp.onTitle);
-      setText(e['h-turn-sub'], `${(x.left / 1000).toFixed(1)} km to go. ${sp.onSub}`);
+      setText(e['h-turn-title'], t(sp.onTitle));
+      setText(e['h-turn-sub'], `${t('{km} km to go.', { km: (x.left / 1000).toFixed(1) })} ${t(sp.onSub)}`);
       e['h-turn-btn'].hidden = true;
       e['h-turn-hint'].hidden = true;
       e['h-turn-bar'].style.width = `${(x.done / x.length) * 100}%`;
       return;
     }
     const m = Math.max(0, Math.round(x.toTurn / 10) * 10);
-    setText(e['h-turn-title'], x.armed ? `${sp.armedTitle} · fork in ${m} m` : `Fork in ${m} m`);
-    setText(e['h-turn-sub'], x.armed ? sp.armedSub : `${sp.question} ${sp.ask(sp)}`);
-    setText(e['h-turn-btn'], x.armed ? sp.cancel : sp.button);
+    setText(e['h-turn-title'], x.armed ? `${t(sp.armedTitle)} · ${t('fork in {m} m', { m })}` : t('Fork in {m} m', { m }));
+    setText(e['h-turn-sub'], x.armed ? t(sp.armedSub) : `${t(sp.question)} ${sp.ask(sp)}`);
+    setText(e['h-turn-btn'], t(x.armed ? sp.cancel : sp.button));
     e['h-turn-btn'].hidden = false;
     e['h-turn-hint'].hidden = false;
     e['h-turn-bar'].style.width = `${(1 - x.toTurn / 1000) * 100}%`;
@@ -364,10 +365,10 @@ export class Hud {
     if (buf.length > 10) { const o = buf[0], n = buf[buf.length - 1]; vam = Math.max(0, ((n.alt - o.alt) / (n.t - o.t)) * 3600); }
     const km = (m) => (m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`);
     const pct = (g) => `${(g * 100).toFixed(1)}%`;
-    setText(e['c-name'], climb.name);
+    setText(e['c-name'], t(climb.name));
     setText(e['c-sub'], st.state === 'before'
-      ? `Starts in ${km(st.toStart)} · ${(st.len / 1000).toFixed(1)} km, ${pct(st.avgAll)} average`
-      : `${Math.round(st.progress * 100)}% done · ${(st.len / 1000).toFixed(1)} km, ${pct(st.avgAll)} average`);
+      ? t('Starts in {dist} · {len} km, {avg} average', { dist: km(st.toStart), len: (st.len / 1000).toFixed(1), avg: pct(st.avgAll) })
+      : t('{pct}% done · {len} km, {avg} average', { pct: Math.round(st.progress * 100), len: (st.len / 1000).toFixed(1), avg: pct(st.avgAll) }));
     setText(e['c-left'], km(st.left));
     setText(e['c-elev'], `${Math.round(st.elevLeft)} m`);
     setText(e['c-avg'], pct(st.avgLeft));
@@ -375,10 +376,10 @@ export class Hud {
     e['c-now'].style.color = gradeColorFor(st.gradeNow);
     setText(e['c-next'], pct(st.next500));
     e['c-next'].style.color = gradeColorFor(st.next500);
-    setText(e['c-vam'], vam ? `${Math.round(vam).toLocaleString()} m/h` : '--');
+    setText(e['c-vam'], vam ? `${Math.round(vam).toLocaleString(locale())} m/h` : '--');
     setText(e['c-eta'], this.spd > 0.8 && st.state === 'on' ? fmtTime(st.left / this.spd) : '--');
-    setText(e['c-top'], `${Math.round(st.summitAlt).toLocaleString()} m`);
-    setText(e['c-steep'], st.left > 30 ? `Steepest part: ${pct(st.steepest.grade)}, in ${km(st.steepest.dist)}` : 'Almost there!');
+    setText(e['c-top'], `${Math.round(st.summitAlt).toLocaleString(locale())} m`);
+    setText(e['c-steep'], st.left > 30 ? t('Steepest part: {grade}, in {dist}', { grade: pct(st.steepest.grade), dist: km(st.steepest.dist) }) : t('Almost there!'));
     drawClimbProfile(e['c-profile'], climb, st);
   }
 }
@@ -396,7 +397,7 @@ function fmtGap(sec) {
 /** Pop-up messages. Never more than two at once, and a repeat of one already showing is ignored, so the screen stays calm. */
 export function toast({ text, sub, kind }) {
   const host = $('toasts');
-  for (const t of host.children) if (t.dataset.key === `${text}|${sub}`) return;
+  for (const c of host.children) if (c.dataset.key === `${text}|${sub}`) return;
   const el = document.createElement('div');
   el.className = `toast ${kind || ''}`;
   el.dataset.key = `${text}|${sub}`;
@@ -413,17 +414,17 @@ export function toast({ text, sub, kind }) {
 export function showSummary(game, levelBefore, xpBefore) {
   const sum = game.summary();
   const stat = (v, label) => `<div><b>${v}</b><small>${label}</small></div>`;
-  $('s-title').textContent = sum.completed ? 'Workout complete! 🎉' : 'Nice ride!';
+  $('s-title').textContent = t(sum.completed ? 'Workout complete! 🎉' : 'Nice ride!');
   $('s-stats').innerHTML = [
-    stat(fmtTime(sum.time), 'Time'),
-    stat((sum.distance / 1000).toFixed(1) + ' km', 'Distance'),
-    stat(Math.round(sum.avgPower) + ' W', 'Avg power'),
-    stat(Math.round(sum.maxP5) + ' W', 'Best 5 seconds'),
-    stat(sum.avgHr ? Math.round(sum.avgHr) + ' bpm' : '--', 'Avg HR'),
-    stat(sum.maxHr ? sum.maxHr + ' bpm' : '--', 'Max HR'),
-    stat(Math.round(sum.kj) + ' kJ', 'Energy'),
-    stat(sum.score.toLocaleString(), 'Points'),
-    ...SPURS.filter((sp) => sum.detours?.[sp.id]).map((sp) => stat(`${sum.detours[sp.id]}×`, sp.name)),
+    stat(fmtTime(sum.time), t('Time')),
+    stat((sum.distance / 1000).toFixed(1) + ' km', t('Distance')),
+    stat(Math.round(sum.avgPower) + ' W', t('Avg power')),
+    stat(Math.round(sum.maxP5) + ' W', t('Best 5 seconds')),
+    stat(sum.avgHr ? Math.round(sum.avgHr) + ' bpm' : '--', t('Avg HR')),
+    stat(sum.maxHr ? sum.maxHr + ' bpm' : '--', t('Max HR')),
+    stat(Math.round(sum.kj) + ' kJ', t('Energy')),
+    stat(sum.score.toLocaleString(locale()), t('Points')),
+    ...SPURS.filter((sp) => sum.detours?.[sp.id]).map((sp) => stat(`${sum.detours[sp.id]}×`, t(sp.name))),
   ].join('');
 
   const canvas = $('s-chart');
@@ -454,33 +455,33 @@ export function showSummary(game, levelBefore, xpBefore) {
 
   const zoneRows = (zones, secs) => {
     const total = secs.reduce((a, b) => a + b, 0) || 1;
-    return zones.map((z, i) => `<div class="zrow" style="--c:${z.color}"><span>${z.name}</span><div class="bar"><i style="width:${(secs[i] / total) * 100}%"></i></div><span>${fmtTime(secs[i])}</span></div>`).join('');
+    return zones.map((z, i) => `<div class="zrow" style="--c:${z.color}"><span>${t(z.name)}</span><div class="bar"><i style="width:${(secs[i] / total) * 100}%"></i></div><span>${fmtTime(secs[i])}</span></div>`).join('');
   };
   $('s-zp').innerHTML = zoneRows(POWER_ZONES, sum.zonePow);
-  $('s-zh').innerHTML = sum.avgHr ? zoneRows(HR_ZONES, sum.zoneHr) : '<small>No heart-rate data</small>';
+  $('s-zh').innerHTML = sum.avgHr ? zoneRows(HR_ZONES, sum.zoneHr) : `<small>${t('No heart-rate data')}</small>`;
 
   const splits = CLIMBS.map((c) => ({ c, rows: climbSplits(sum.samples, c) })).filter((x) => x.rows.length);
   $('s-splits').hidden = !splits.length;
   $('s-splits').innerHTML = splits.map(({ c, rows }) => {
     const best = Math.min(...rows.map((r) => r.time));
-    return `<h4>${c.name}: splits per ascent</h4><table class="splits"><thead><tr><th>#</th><th>Time</th><th></th><th>Avg W</th><th>Avg HR</th><th>km/h</th></tr></thead><tbody>${rows.map((r) => {
+    return `<h4>${t('{name}: splits per ascent', { name: t(c.name) })}</h4><table class="splits"><thead><tr><th>#</th><th>${t('Time')}</th><th></th><th>${t('Avg W')}</th><th>${t('Avg HR')}</th><th>km/h</th></tr></thead><tbody>${rows.map((r) => {
       const gap = r.time - best;
-      return `<tr><td>${r.lap}</td><td>${fmtTime(r.time)}</td><td>${gap < 0.5 ? '<b>best</b>' : '+' + fmtTime(gap)}</td><td>${Math.round(r.avgPower)}</td><td>${r.avgHr ? Math.round(r.avgHr) : '--'}</td><td>${(r.avgSpeed * 3.6).toFixed(1)}</td></tr>`;
+      return `<tr><td>${r.lap}</td><td>${fmtTime(r.time)}</td><td>${gap < 0.5 ? `<b>${t('best')}</b>` : '+' + fmtTime(gap)}</td><td>${Math.round(r.avgPower)}</td><td>${r.avgHr ? Math.round(r.avgHr) : '--'}</td><td>${(r.avgSpeed * 3.6).toFixed(1)}</td></tr>`;
     }).join('')}</tbody></table>`;
   }).join('');
 
   $('s-ach').innerHTML = sum.unlocked.map((id) => {
     const a = ACHIEVEMENTS.find((x) => x.id === id);
-    return `<span class="badge">🏅 ${a.name}</span>`;
+    return `<span class="badge">🏅 ${t(a.name)}</span>`;
   }).join('') + sum.discovered.map((id) => {
     const lm = LANDMARKS.find((x) => x.id === id);
-    return `<span class="badge">${lm.emoji} ${lm.name}</span>`;
+    return `<span class="badge">${lm.emoji} ${t(lm.name)}</span>`;
   }).join('');
 
   const xp = xpBefore + sum.score;
   const lvl = levelFor(xp);
-  $('s-level').textContent = `Level ${lvl}${lvl > levelBefore ? ' ⬆' : ''}`;
-  $('s-lvltitle').textContent = levelTitle(lvl);
+  $('s-level').textContent = `${t('Level {n}', { n: lvl })}${lvl > levelBefore ? ' ⬆' : ''}`;
+  $('s-lvltitle').textContent = t(levelTitle(lvl));
   $('s-xpbar').style.width = `${((xp - xpForLevel(lvl)) / (xpForLevel(lvl + 1) - xpForLevel(lvl))) * 100}%`;
-  $('s-xp').textContent = `+${sum.score.toLocaleString()} XP · ${xp.toLocaleString()} total`;
+  $('s-xp').textContent = t('+{n} XP · {total} total', { n: sum.score.toLocaleString(locale()), total: xp.toLocaleString(locale()) });
 }
